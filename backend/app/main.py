@@ -16,8 +16,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
-from .database import Base, make_database
+from .database import make_database
+from .migrations import initialize_database
 from .cache import AnswerCache, answer_key
+from .idempotency import DEFER_COMMIT, IdempotentRoute, erase_receipts
 from .models import Goal, KnowledgeEntry, LearningSession, Unit, now_utc
 from .schemas import ChatInput, GoalInput, KnowledgeInput, LearnInput, PracticeInput, QuestionInput, ReflectionInput, ReviewInput, SubmissionInput
 from .serialization import goal_data, knowledge_data, session_data, unit_data
@@ -40,6 +42,10 @@ PRINCIPLES = [
 
 
 def get_db(request: Request):
+    owned = getattr(request.state, "idempotency_session", None)
+    if owned is not None:
+        yield owned
+        return
     with request.app.state.session_factory() as session:
         yield session
 
@@ -67,7 +73,10 @@ def record(db: Session, unit: Unit, kind: str, content: str, feedback: str, scor
 
 def save(db: Session):
     try:
-        db.commit()
+        if db.info.get(DEFER_COMMIT):
+            db.flush()
+        else:
+            db.commit()
     except StaleDataError:
         db.rollback()
         raise HTTPException(409, "这个学习单元刚刚更新，请刷新后继续，避免重复提交。")
@@ -121,8 +130,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
-        Base.metadata.create_all(engine)
         try:
+            initialize_database(engine)
             yield
         finally:
             await answer_cache.close()
@@ -134,10 +143,12 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     application.state.engine = engine
     application.state.session_factory = session_factory
+    application.router.route_class = IdempotentRoute
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()],
-        allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type"],
+        allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "Idempotency-Key"],
+        expose_headers=["Idempotency-Replayed", "Retry-After"],
     )
 
     @application.exception_handler(ProviderError)
@@ -201,6 +212,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         if item is None:
             raise HTTPException(404, "没有找到这个学习目标。")
         db.delete(item)
+        erase_receipts(db, f"goal:{goal_id}")
         save(db)
         return Response(status_code=204)
 
@@ -387,6 +399,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         if item is None:
             raise HTTPException(404, "没有找到这条知识记录。")
         db.delete(item)
+        erase_receipts(db, f"knowledge:{entry_id}")
         save(db)
         return Response(status_code=204)
 
