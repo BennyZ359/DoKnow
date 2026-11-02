@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import Icon from './components/Icon.vue'
-import { api, post } from './api'
+import { api, ApiError, post } from './api'
+import { storageWarning, useDrafts } from './persistence'
+import { acknowledgeWrite, forgetUnitWrites, pendingWrites, sendWrite } from './writes'
+import type { PendingWrite } from './writes'
 import type {
   Dashboard,
   FullUnit,
@@ -47,6 +50,9 @@ const busy = ref('')
 const loading = ref(true)
 const error = ref('')
 const notice = ref('')
+const syncWarning = ref('')
+const syncing = ref(false)
+const now = ref(Date.now())
 const feedback = ref<Submission | null>(null)
 const goalDialog = ref<HTMLDialogElement | null>(null)
 const goalTitleInput = ref<HTMLInputElement | null>(null)
@@ -66,6 +72,64 @@ const noteForm = reactive({ title: '', content: '' })
 const showNoteForm = ref(false)
 const selectedNote = ref<string | null>(null)
 const uploadInput = ref<HTMLInputElement | null>(null)
+const drafts = useDrafts()
+const draftScope = (kind: string) => () => (unit.value ? `unit:${unit.value.id}:${kind}` : null)
+drafts.bind(
+  () => 'goal',
+  () => ({ ...goalForm }),
+  (value) => Object.assign(goalForm, value)
+)
+drafts.bind(
+  () => 'note',
+  () => ({ ...noteForm }),
+  (value) => Object.assign(noteForm, value)
+)
+drafts.bind(
+  draftScope('learn'),
+  () => ({ reflection: learnReflection.value }),
+  (value) => {
+    learnReflection.value = String(value.reflection)
+  }
+)
+drafts.bind(
+  draftScope('practice'),
+  () => ({ answer: practiceAnswer.value }),
+  (value) => {
+    practiceAnswer.value = String(value.answer)
+  }
+)
+drafts.bind(
+  draftScope('project'),
+  () => ({ content: projectContent.value }),
+  (value) => {
+    projectContent.value = String(value.content)
+  }
+)
+drafts.bind(
+  draftScope('teach'),
+  () => ({ content: teachContent.value }),
+  (value) => {
+    teachContent.value = String(value.content)
+  }
+)
+drafts.bind(
+  draftScope('reflect'),
+  () => ({ ...reflection }),
+  (value) => Object.assign(reflection, value)
+)
+drafts.bind(
+  draftScope('review'),
+  () => ({ ...recall }),
+  (value) => Object.assign(recall, value)
+)
+drafts.bind(
+  draftScope('chat'),
+  () => ({ message: chatMessage.value }),
+  (value) => {
+    chatMessage.value = String(value.message)
+  }
+)
+showNoteForm.value = !!(noteForm.title || noteForm.content)
 const goals = computed(() => dashboard.value.goals)
 const currentGoal = computed(() => goals.value.find((g) => g.id === unit.value?.goal_id))
 const nextGoal = computed(
@@ -92,7 +156,7 @@ const stagePosition = computed(() =>
   unit.value?.stage === 'complete' ? 6 : stages.findIndex((s) => s.key === unit.value?.stage)
 )
 const reviewDue = computed(
-  () => !!unit.value?.review_due_at && new Date(unit.value.review_due_at).getTime() <= Date.now()
+  () => !!unit.value?.review_due_at && new Date(unit.value.review_due_at).getTime() <= now.value
 )
 const canSubmit = computed(
   () =>
@@ -101,15 +165,29 @@ const canSubmit = computed(
       (activeTab.value === 'review' && unit.value.stage === 'complete')) &&
     (activeTab.value !== 'review' || reviewDue.value)
 )
-const today = new Intl.DateTimeFormat('zh-CN', {
-  month: 'long',
-  day: 'numeric',
-  weekday: 'long',
-}).format(new Date())
-const greeting =
-  new Date().getHours() < 12 ? '上午好' : new Date().getHours() < 18 ? '下午好' : '晚上好'
+const today = computed(() =>
+  new Intl.DateTimeFormat('zh-CN', {
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  }).format(new Date(now.value))
+)
+const greeting = computed(() =>
+  new Date(now.value).getHours() < 12
+    ? '上午好'
+    : new Date(now.value).getHours() < 18
+      ? '下午好'
+      : '晚上好'
+)
 let routeSequence = 0
 let summarySequence = 0
+let dataEpoch = 0
+let lastSyncAt = 0
+let clockTimer: number | undefined
+let lastDueCount = 0
+let syncTask: Promise<void> | null = null
+let syncAgain = false
+let savedSyncQueued = false
 
 const length = (text: string) => text.replace(/\s/g, '').length
 const stageLabel = (stage: string) =>
@@ -151,12 +229,111 @@ function navigate(target: View, id?: string) {
 
 async function refreshSummary() {
   const request = ++summarySequence
+  const epoch = dataEpoch
   const result = await api<Dashboard>('/dashboard')
-  if (request === summarySequence) dashboard.value = result
+  if (request === summarySequence && epoch === dataEpoch) dashboard.value = result
+}
+
+function updateSummaryUnit(value: Unit) {
+  for (const goal of dashboard.value.goals) {
+    const index = goal.units.findIndex((item) => item.id === value.id)
+    if (index !== -1) goal.units[index] = { ...goal.units[index], ...value }
+  }
+}
+
+function syncCurrent(saved = false): Promise<void> {
+  if (syncTask) {
+    syncAgain = true
+    savedSyncQueued ||= saved
+    return syncTask
+  }
+  syncTask = (async () => {
+    let confirmedSave = saved
+    do {
+      syncAgain = false
+      confirmedSave ||= savedSyncQueued
+      savedSyncQueued = false
+      await syncOnce(confirmedSave)
+    } while (syncAgain)
+  })().finally(() => {
+    syncing.value = false
+    syncTask = null
+  })
+  return syncTask
+}
+
+async function syncOnce(saved: boolean) {
+  syncing.value = true
+  lastSyncAt = Date.now()
+  const sequence = routeSequence
+  const epoch = dataEpoch
+  const id = unit.value?.id
+  const currentView = view.value
+  const requests: Promise<void>[] = [refreshSummary()]
+  if (currentView === 'learn' && id)
+    requests.push(
+      api<FullUnit>(`/units/${id}`).then((value) => {
+        if (sequence === routeSequence && epoch === dataEpoch && unit.value?.id === id)
+          unit.value = value
+      })
+    )
+  if (currentView === 'reviews')
+    requests.push(
+      api<Unit[]>('/reviews').then((value) => {
+        if (sequence === routeSequence && epoch === dataEpoch) reviews.value = value
+      })
+    )
+  if (currentView === 'knowledge')
+    requests.push(
+      api<Note[]>('/knowledge').then((value) => {
+        if (sequence === routeSequence && epoch === dataEpoch) notes.value = value
+      })
+    )
+  const results = await Promise.allSettled(requests)
+  if (sequence !== routeSequence || epoch !== dataEpoch) return
+  syncWarning.value = results.some((result) => result.status === 'rejected')
+    ? saved
+      ? '提交已保存，部分记录暂未同步。可以稍后同步最新记录。'
+      : '记录暂未同步，页面保留上次内容。请检查连接后再同步。'
+    : ''
+}
+
+function tick() {
+  if (document.visibilityState === 'hidden') return
+  now.value = Date.now()
+  const count = goals.value
+    .flatMap((goal) => goal.units)
+    .filter(
+      (item) =>
+        (item.stage === 'review' || item.stage === 'complete') &&
+        item.review_due_at &&
+        new Date(item.review_due_at).getTime() <= now.value
+    ).length
+  if (
+    !busy.value &&
+    !loading.value &&
+    !syncing.value &&
+    (count !== lastDueCount || now.value - lastSyncAt >= 30_000)
+  ) {
+    lastDueCount = count
+    void syncCurrent()
+  }
+}
+
+function resumePage() {
+  now.value = Date.now()
+  if (
+    document.visibilityState !== 'hidden' &&
+    !busy.value &&
+    !loading.value &&
+    Date.now() - lastSyncAt >= 2000
+  )
+    void syncCurrent()
 }
 
 async function readRoute() {
   const sequence = ++routeSequence
+  const epoch = dataEpoch
   const parts = location.hash.replace(/^#\/?/, '').split('/')
   view.value = ['dashboard', 'learn', 'reviews', 'knowledge', 'settings'].includes(parts[0])
     ? (parts[0] as View)
@@ -164,9 +341,10 @@ async function readRoute() {
   error.value = ''
   notice.value = ''
   loading.value = true
+  lastSyncAt = Date.now()
   try {
     await refreshSummary()
-    if (sequence !== routeSequence) return
+    if (sequence !== routeSequence || epoch !== dataEpoch) return
     if (view.value === 'learn') {
       const id = parts[1] || nextUnit.value?.id
       if (id) {
@@ -175,7 +353,7 @@ async function readRoute() {
           unit.value = null
         }
         const response = await api<FullUnit>(`/units/${id}`)
-        if (sequence !== routeSequence) return
+        if (sequence !== routeSequence || epoch !== dataEpoch) return
         if (unit.value?.id !== id) clearStudyForm()
         unit.value = response
         activeTab.value = response.stage === 'complete' ? 'review' : response.stage
@@ -183,34 +361,24 @@ async function readRoute() {
     }
     if (view.value === 'reviews') {
       const result = await api<Unit[]>('/reviews')
-      if (sequence === routeSequence) reviews.value = result
+      if (sequence === routeSequence && epoch === dataEpoch) reviews.value = result
     }
     if (view.value === 'knowledge') {
       const result = await api<Note[]>('/knowledge')
-      if (sequence === routeSequence) notes.value = result
+      if (sequence === routeSequence && epoch === dataEpoch) notes.value = result
     }
     if (!settings.value || view.value === 'settings') {
       const result = await api<Settings>('/settings')
-      if (sequence === routeSequence) settings.value = result
+      if (sequence === routeSequence && epoch === dataEpoch) settings.value = result
     }
   } catch (e) {
-    if (sequence === routeSequence) error.value = (e as Error).message
+    if (sequence === routeSequence && epoch === dataEpoch) error.value = (e as Error).message
   } finally {
     if (sequence === routeSequence) loading.value = false
   }
 }
 
 function clearStudyForm() {
-  learnReflection.value = ''
-  practiceAnswer.value = ''
-  projectContent.value = ''
-  teachContent.value = ''
-  reflection.content = ''
-  reflection.takeaway = ''
-  reflection.change = ''
-  recall.answer = ''
-  recall.rating = 3
-  chatMessage.value = ''
   chatReply.value = ''
   feedback.value = null
 }
@@ -219,12 +387,23 @@ async function run(key: string, action: () => Promise<void>) {
   if (busy.value) return
   const sequence = routeSequence
   busy.value = key
+  dataEpoch++
   error.value = ''
   notice.value = ''
   try {
     await action()
   } catch (e) {
-    if (sequence === routeSequence) error.value = (e as Error).message
+    if (sequence === routeSequence)
+      error.value =
+        (e as Error).message +
+        (e instanceof ApiError &&
+        (e.status === 0 ||
+          e.status >= 500 ||
+          e.code === 'idempotency_in_progress' ||
+          e.code === 'idempotency_expired_owner') &&
+        pendingWrites.value.length
+          ? ' 操作结果尚未确认，原文已保留；可确认上次操作，避免重复记录。'
+          : '')
   } finally {
     busy.value = ''
   }
@@ -240,11 +419,81 @@ async function openGoal() {
 async function createGoal() {
   const sequence = routeSequence
   await run('goal', async () => {
-    const goal = await post<Goal>('/goals', goalForm)
+    const { result: goal, entry } = await sendWrite<Goal>(
+      '/goals',
+      goalForm,
+      'goal',
+      '创建学习目标'
+    )
+    drafts.clearSubmitted(entry.scope, entry.payload)
+    acknowledgeWrite(entry)
+    dataEpoch++
+    dashboard.value.goals = [goal, ...dashboard.value.goals.filter((item) => item.id !== goal.id)]
     goalDialog.value?.close()
-    goalForm.title = ''
-    goalForm.motivation = ''
     if (sequence === routeSequence) navigate('learn', goal.units[0]?.id)
+  })
+}
+
+function applySubmission(result: Submission, entry: PendingWrite, sequence: number) {
+  dataEpoch++
+  if (result.passed !== false) drafts.clearSubmitted(entry.scope, entry.payload)
+  acknowledgeWrite(entry)
+  updateSummaryUnit(result.unit)
+  if (sequence !== routeSequence || unit.value?.id !== result.unit.id) return
+  feedback.value = result
+  unit.value = { ...unit.value, ...result.unit }
+  if (result.passed === false) {
+    if (unit.value.stage !== activeTab.value) activeTab.value = unit.value.stage
+  } else notice.value = '这一步已记录。继续把理解变成能力。'
+}
+
+function applyNote(result: Note, entry: PendingWrite, sequence: number) {
+  dataEpoch++
+  if (entry.payload) drafts.clearSubmitted(entry.scope, entry.payload)
+  acknowledgeWrite(entry)
+  if (sequence !== routeSequence) return
+  notes.value = [result, ...notes.value.filter((item) => item.id !== result.id)]
+  selectedNote.value = result.id
+  if (entry.scope === 'note' && !noteForm.title && !noteForm.content) showNoteForm.value = false
+  notice.value = entry.filename ? `「${result.title}」已导入。` : '笔记已存入知识库。'
+}
+
+async function confirmWrite(entry: PendingWrite) {
+  if (!entry.payload) {
+    notice.value = `请重新选择「${entry.filename}」，将确认同一次导入，不会重复创建资料。`
+    if (view.value !== 'knowledge') navigate('knowledge')
+    return
+  }
+  const sequence = routeSequence
+  await run('recovery', async () => {
+    const { result } = await sendWrite<unknown>(
+      entry.path,
+      entry.payload!,
+      entry.scope,
+      entry.label,
+      entry
+    )
+    if (entry.path === '/goals') {
+      const goal = result as Goal
+      drafts.clearSubmitted(entry.scope, entry.payload)
+      acknowledgeWrite(entry)
+      dataEpoch++
+      dashboard.value.goals = [goal, ...dashboard.value.goals.filter((item) => item.id !== goal.id)]
+      goalDialog.value?.close()
+      if (sequence === routeSequence) navigate('learn', goal.units[0]?.id)
+    } else if (entry.path === '/knowledge') {
+      applyNote(result as Note, entry, sequence)
+    } else if (entry.path.endsWith('/chat')) {
+      drafts.clearSubmitted(entry.scope, entry.payload)
+      acknowledgeWrite(entry)
+      dataEpoch++
+      if (sequence === routeSequence && entry.scope === `unit:${unit.value?.id}:chat`)
+        chatReply.value = (result as { reply: string }).reply
+      notice.value = '导师交流已确认保存。'
+    } else {
+      applySubmission(result as Submission, entry, sequence)
+    }
+    await syncCurrent(true)
   })
 }
 
@@ -253,7 +502,7 @@ async function submitStage() {
   const currentId = unit.value.id
   const currentStage = activeTab.value
   const sequence = routeSequence
-  const bodies: Record<string, unknown> = {
+  const bodies: Record<string, Record<string, unknown>> = {
     learn: { reflection: learnReflection.value },
     practice: { answer: practiceAnswer.value },
     project: { content: projectContent.value },
@@ -262,18 +511,14 @@ async function submitStage() {
     review: recall,
   }
   await run('submission', async () => {
-    const result = await post<Submission>(
+    const { result, entry } = await sendWrite<Submission>(
       `/units/${currentId}/${currentStage}`,
-      bodies[currentStage]
+      bodies[currentStage],
+      `unit:${currentId}:${currentStage}`,
+      `${stageLabel(currentStage)} · ${unit.value?.title || ''}`
     )
-    const updated = await api<FullUnit>(`/units/${currentId}`)
-    await refreshSummary()
-    if (sequence !== routeSequence || unit.value?.id !== currentId) return
-    feedback.value = result
-    unit.value = updated
-    if (result.passed === false) {
-      if (unit.value.stage !== currentStage) activeTab.value = unit.value.stage
-    } else notice.value = '这一步已记录。继续把理解变成能力。'
+    applySubmission(result, entry, sequence)
+    await syncCurrent(true)
   })
 }
 
@@ -282,15 +527,19 @@ async function sendChat() {
   const id = unit.value.id
   const sequence = routeSequence
   await run('chat', async () => {
-    const answer = await post<{ reply: string; mode: string }>(`/units/${id}/chat`, {
-      message: chatMessage.value,
-    })
-    const updated = await api<FullUnit>(`/units/${id}`)
-    await refreshSummary()
-    if (sequence !== routeSequence || unit.value?.id !== id) return
-    chatReply.value = answer.reply
-    chatMessage.value = ''
-    unit.value = updated
+    const { result: answer, entry } = await sendWrite<{ reply: string; mode: string }>(
+      `/units/${id}/chat`,
+      {
+        message: chatMessage.value,
+      },
+      `unit:${id}:chat`,
+      '导师交流'
+    )
+    drafts.clearSubmitted(entry.scope, entry.payload)
+    acknowledgeWrite(entry)
+    dataEpoch++
+    if (sequence === routeSequence && unit.value?.id === id) chatReply.value = answer.reply
+    await syncCurrent(true)
   })
 }
 
@@ -299,24 +548,22 @@ async function deleteGoal(goal: Goal) {
   const sequence = routeSequence
   await run('delete', async () => {
     await api(`/goals/${goal.id}`, { method: 'DELETE' })
-    await refreshSummary()
+    const ids = goal.units.map((item) => item.id)
+    drafts.removeUnits(ids)
+    forgetUnitWrites(ids)
+    dataEpoch++
+    dashboard.value.goals = dashboard.value.goals.filter((item) => item.id !== goal.id)
     if (sequence === routeSequence) notice.value = '学习目标已删除。'
+    await syncCurrent(true)
   })
 }
 
 async function createNote() {
   const sequence = routeSequence
   await run('note', async () => {
-    const result = await post<Note>('/knowledge', noteForm)
-    const updated = await api<Note[]>('/knowledge')
-    await refreshSummary()
-    if (sequence !== routeSequence) return
-    notes.value = updated
-    selectedNote.value = result.id
-    noteForm.title = ''
-    noteForm.content = ''
-    showNoteForm.value = false
-    notice.value = '笔记已存入知识库。'
+    const { result, entry } = await sendWrite<Note>('/knowledge', noteForm, 'note', '保存知识笔记')
+    applyNote(result, entry, sequence)
+    await syncCurrent(true)
   })
 }
 
@@ -331,15 +578,14 @@ async function importFile(event: Event) {
     return
   }
   await run('import', async () => {
-    const body = new FormData()
-    body.append('file', file)
-    const result = await api<Note>('/knowledge/import', { method: 'POST', body })
-    const updated = await api<Note[]>('/knowledge')
-    await refreshSummary()
-    if (sequence !== routeSequence) return
-    notes.value = updated
-    selectedNote.value = result.id
-    notice.value = `「${result.title}」已导入。`
+    const { result, entry } = await sendWrite<Note>(
+      '/knowledge/import',
+      file,
+      'import',
+      '导入学习资料'
+    )
+    applyNote(result, entry, sequence)
+    await syncCurrent(true)
   })
   input.value = ''
 }
@@ -349,11 +595,13 @@ async function deleteNote(note: Note) {
   const sequence = routeSequence
   await run('delete-note', async () => {
     await api(`/knowledge/${note.id}`, { method: 'DELETE' })
-    await refreshSummary()
-    if (sequence !== routeSequence) return
-    notes.value = notes.value.filter((n) => n.id !== note.id)
-    knowledgeAnswer.value = null
-    notice.value = '笔记已删除。'
+    dataEpoch++
+    if (sequence === routeSequence) {
+      notes.value = notes.value.filter((n) => n.id !== note.id)
+      knowledgeAnswer.value = null
+      notice.value = '笔记已删除。'
+    }
+    await syncCurrent(true)
   })
 }
 
@@ -380,10 +628,16 @@ function nextStage() {
 
 onMounted(() => {
   window.addEventListener('hashchange', readRoute)
+  window.addEventListener('focus', resumePage)
+  document.addEventListener('visibilitychange', resumePage)
+  clockTimer = window.setInterval(tick, 1000)
   void readRoute()
 })
 onUnmounted(() => {
   window.removeEventListener('hashchange', readRoute)
+  window.removeEventListener('focus', resumePage)
+  document.removeEventListener('visibilitychange', resumePage)
+  window.clearInterval(clockTimer)
 })
 </script>
 
@@ -468,6 +722,31 @@ onUnmounted(() => {
         <div v-if="notice" class="alert success" role="status">
           <Icon name="check" /><span>{{ notice }}</span>
         </div>
+        <div v-if="storageWarning" class="alert caution" role="status">
+          <Icon name="notes" /><span>{{ storageWarning }}</span>
+        </div>
+        <div v-if="syncWarning" class="alert caution" role="status">
+          <Icon name="repeat" /><span>{{ syncWarning }}</span>
+          <button class="text-button" :disabled="syncing || !!busy" @click="syncCurrent()">
+            同步最新记录
+          </button>
+        </div>
+        <section
+          v-if="pendingWrites.length && !busy"
+          class="pending-operations"
+          aria-label="待确认的操作"
+        >
+          <p>上次操作的结果尚未确认。原文已保留，确认时会继续同一次操作。</p>
+          <div v-for="entry in pendingWrites" :key="entry.key">
+            <span>{{ entry.label }}{{ entry.filename ? ` · ${entry.filename}` : '' }}</span>
+            <button class="text-button" @click="confirmWrite(entry)">
+              {{ entry.filename ? '重新选择文件确认' : '确认上次操作' }}
+            </button>
+          </div>
+          <button class="text-button" :disabled="syncing" @click="syncCurrent()">
+            同步最新记录
+          </button>
+        </section>
         <div v-if="loading" class="loading-state" role="status">
           <span class="spinner"></span>正在整理你的学习空间…
         </div>
@@ -750,6 +1029,7 @@ onUnmounted(() => {
                   ><Icon v-if="i > stagePosition" name="lock" :size="12" />
                 </button>
               </nav>
+              <p class="draft-hint">未提交的文字自动保存在此浏览器，切换单元或刷新后可继续。</p>
               <section class="lesson-panel">
                 <div v-if="!canSubmit && activeTab !== 'review'" class="read-only-hint">
                   <Icon name="history" :size="16" />这是你已经走过的一步，可以回看已有的理解与记录。
@@ -1138,7 +1418,7 @@ onUnmounted(() => {
             <template v-for="goal in goals" :key="goal.id"
               ><div
                 v-for="item in goal.units.filter(
-                  (u) => u.review_due_at && new Date(u.review_due_at).getTime() > Date.now()
+                  (u) => u.review_due_at && new Date(u.review_due_at).getTime() > now
                 )"
                 :key="item.id"
                 class="upcoming-row"
@@ -1177,6 +1457,7 @@ onUnmounted(() => {
           </div>
           <section v-if="showNoteForm" class="new-note-panel">
             <h3>记下一次新的理解</h3>
+            <p class="draft-hint">草稿自动保存在此浏览器，存入知识库后才会成为学习记录。</p>
             <form @submit.prevent="createNote">
               <label for="note-title">笔记标题</label
               ><input

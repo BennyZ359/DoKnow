@@ -2015,6 +2015,38 @@ main {
   border-color: #dce7cc;
   color: #7e9565;
 }
+.alert.caution {
+  background: #fff7e8;
+  border-color: #e9d8b6;
+  color: #876b43;
+  flex-wrap: wrap;
+}
+.draft-hint {
+  color: #7a886f;
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 12px 0;
+}
+.pending-operations {
+  border: 1px solid #e9d8b6;
+  background: #fff7e8;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+  font-size: 12px;
+  color: #876b43;
+}
+.pending-operations p {
+  margin: 0 0 12px;
+}
+.pending-operations > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
 .goal-dialog .alert {
   margin: 15px 0;
 }

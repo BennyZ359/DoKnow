@@ -74,11 +74,23 @@ export interface KnowledgeAnswer {
   mode: string
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status = 0,
+    public code = ''
+  ) {
+    super(message)
+  }
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  let response: Response
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 90_000)
   try {
-    response = await fetch(`/api${path}`, {
+    const response = await fetch(`/api${path}`, {
       ...options,
+      signal: options.signal || controller.signal,
       headers: {
         ...(options.body && !(options.body instanceof FormData)
           ? { 'Content-Type': 'application/json' }
@@ -86,22 +98,27 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
         ...options.headers,
       },
     })
-  } catch {
-    throw new Error('暂时连接不上学习服务。请确认后端已启动，再重试。')
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      if (controller.signal.aborted)
+        throw new ApiError('等待服务响应已超时，请确认上次操作后重试。')
+      const detail = data?.detail
+      const message =
+        typeof detail === 'string'
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((entry: { msg?: string }) => entry.msg || '请检查输入内容').join('；')
+            : '操作没有完成，请稍后重试。'
+      throw new ApiError(message, response.status, typeof data?.code === 'string' ? data.code : '')
+    }
+    if (response.status === 204) return undefined as T
+    return (await response.json()) as T
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError('连接中断、等待超时或服务响应不完整。请检查连接后重试。')
+  } finally {
+    window.clearTimeout(timeout)
   }
-  if (!response.ok) {
-    const data = await response.json().catch(() => null)
-    const detail = data?.detail
-    const message =
-      typeof detail === 'string'
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((entry: { msg?: string }) => entry.msg || '请检查输入内容').join('；')
-          : '操作没有完成，请稍后重试。'
-    throw new Error(message)
-  }
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
 }
 
 export const post = <T>(path: string, body: unknown) =>
