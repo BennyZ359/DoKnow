@@ -1,26 +1,38 @@
+
+<div align="center">
+
 # DoKnow
 
-<p align="center">
-  <strong>Know. Do. Grow.</strong>
+### Know. Do. Grow.
+
+**知而后行 · 行而后知**
+
+An Open-Source AI Learning Companion
+
+<p>
+  A personal AI tutor that helps you learn, practice, and master knowledge.
+  <br/>
+  Don't just get answers. Build real-world capabilities.
 </p>
 
-<p align="center">
-  知而后行 · 行而后知
+<p>
+  <img src="https://img.shields.io/badge/AI-Agent-8A63D2?style=flat-square" />
+  <img src="https://img.shields.io/badge/Open%20Source-MIT-green?style=flat-square" />
+  <img src="https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Python-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" />
 </p>
 
-<p align="center">
-  An Open-Source AI Learning Companion
+<p>
+  <a href="#-features">Features</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-roadmap">Roadmap</a> ·
+  <a href="#-contributing">Contributing</a>
 </p>
 
-<p align="center">
-  <a href="#-项目介绍">项目介绍</a> ·
-  <a href="#-核心理念">核心理念</a> ·
-  <a href="#-核心功能">核心功能</a> ·
-  <a href="#-技术架构">技术架构</a> ·
-  <a href="#-项目规划">项目规划</a>
-</p>
+</div>
 
 ---
+
 
 ## 📖 项目介绍
 
