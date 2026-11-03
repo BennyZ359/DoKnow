@@ -16,6 +16,8 @@
 
 初版运行时 SELECT 会更新 SHM，修正为临时副本诊断后通过。进程测试在并行回归中用 2 秒启动预算过短，改为 10 秒后完整通过；产品默认 30 秒未改。Windows 浏览器 runner 在用例完成后需要按本次日志核对并结束本次测试服务，再取得最终汇总；此为已有 Playwright webServer 收尾问题，不属于新本地入口的进程管理。
 
+远端首次 `a61c86f` 的 CI 中，Linux 四个收尾测试因 TIME_WAIT 被误判为端口占用而失败。修复 `78a59cd` 在 POSIX 探测中使用 SO_REUSEADDR，仍拒绝真实监听者；新增专门的 TIME_WAIT/重新监听回归。Windows 补充验证为 11 通过、1 POSIX 场景跳过；修复提交自己的 [CI 41586306961](https://github.com/BennyZ359/DoKnow/actions/runs/41586306961) 五项全部成功，包含 Linux 后端与 Windows 真实 demo 生命周期。后续文档提交须另查自身 CI。
+
 手机正常/故障状态截图已检查，位于 `.cache/browser/`，不提交。新增 Windows CI 运行诊断/启停测试和真实 demo 生命周期，连同既有四项共五项；远端交付与各提交自己的 CI 见 [进度](PROGRESS.md)。
 
 ## 2026-11-03：知识笔记管理与目标基础编辑

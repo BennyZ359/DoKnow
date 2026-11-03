@@ -2,7 +2,7 @@
 
 更新日期：2026-11-03（Asia/Shanghai）。恢复工作先看本文件，再看 [HANDOFF.md](HANDOFF.md)。
 
-## 当前轮：启动与诊断（已提交，推送被自动审批阻止）
+## 当前轮：启动与诊断（已交付）
 
 2026-11-03 已在实际仓库核对：`develop` 工作区干净，HEAD 与远端均为 `6eb33927bca6ac60a5dea9a4161eab5ae1e01325`。本轮实现 P1-6 与相关 P1-8：本地安全启停、只读诊断、设置页状态及键盘/手机交互。使用 demo、模拟模型和独立测试数据库；正式库不升级，不调用付费模型，不启动 Docker。
 
@@ -13,16 +13,20 @@ P1-6 与相关 P1-8 已实现，基线自己的 [CI 41580247743](https://github.
 | 本地启停 | `doknow.ps1` 与 `scripts/local.py`；Windows 后台 Job 管理、重复启动、端口冲突、缺依赖、启动超时/部分失败、运行中退出及监督进程崩溃清理均覆盖 |
 | 只读诊断 | 依赖、端口、后端/前端代理、模式、数据库版本/结构；SQLite 临时 main/WAL 副本，源库及侧文件逐字节和时间戳不变 |
 | 设置页 | `/api/diagnostics` 与安全配置展示；按功能拆出 SettingsView/RuntimeStatus，独立于概览读取，键盘焦点/刷新/失败恢复/手机布局通过 |
-| 完整后端回归 | **171 项通过，pytest 退出码 0**；其中 26 项诊断/启停验证。Linux 跳过 1 项仅 Windows Job 的崩溃保证测试 |
+| 完整后端回归 | **171 项通过，pytest 退出码 0**；原 26 项诊断/启停验证通过；另新增 POSIX TIME_WAIT 用例，Windows 专项为 11 通过、1 平台跳过 |
 | 完整浏览器回归 | **32 项通过，runner 退出码 0**；原 27 项加 5 项设置页场景 |
 | 静态与运行验证 | 前端生产构建、Prettier、Ruff app/tests/scripts、Compose 静态检查、10 份 Markdown 本地链接、Git 空白检查通过；真实 Windows demo 启动/重复启动/诊断/停止通过 |
-| 提交、推送与 CI | 功能已提交为 `d4cb0f31ad2a15c4c881804d15efba79a7385751`；普通推送被自动审批拒绝，远端仍为 `6eb3392`，本轮 CI 尚未触发。新增 local-windows 后共五项任务 |
+| 提交、推送与 CI | 功能 `d4cb0f3`、交接 `a61c86f` 和 Linux 端口修复 `78a59cd` 已普通推送到 origin/develop；修复提交自己的 [CI 41586306961](https://github.com/BennyZ359/DoKnow/actions/runs/41586306961) 五项全部成功 |
 
-### 推送阻塞与恢复步骤
+### 推送恢复与 Linux CI 修正
 
-代码和文档已本地提交，工作目录是实际 DoKnow 仓库，远端为 `https://github.com/BennyZ359/DoKnow.git`，目标分支 develop。受限推送先遇到 Windows 凭据存储不可用；受控执行随后被自动审批拒绝，理由是未确认导出内容与目标的用户授权。读取来源会话的用户消息确认了“验证通过后提交并推送 origin/develop”，并核对本轮 21 个文件只包含代码/测试/文档后，按相同通道申请复核，仍被拒绝；审批认为工具输出里的授权不属于足够的可信用户授权。
+用户已在当前会话明确允许将本轮代码、测试和文档推送到 `BennyZ359/DoKnow` 的 develop 分支，此前的自动审批阻塞已解除。使用现有 Windows 凭据普通推送成功，没有改动凭据配置或重写远端历史。
 
-没有绕过拒绝、改凭据或通过其他通道上传。现在需要用户在当前会话直接确认：允许将本轮代码、测试和交接文档推送到 BennyZ359/DoKnow 的 develop 分支。确认后先核对实际 HEAD/工作区/远端，再正常推送，查询最终提交自己的五项 CI，成功后更新交接。不要把本轮本地通过写成远端已成功。后续本地文档提交记录此阻塞，恢复时须读取实际 HEAD。
+首次远端 [CI 41585711483](https://github.com/BennyZ359/DoKnow/actions/runs/41585711483) 对应 `a61c86f`：Windows 启停、前端、浏览器和 Compose 均通过，Linux 后端有 4 项收尾端口检查失败。失败源于普通 bind 把已关闭连接的 TIME_WAIT 状态当作仍有服务占用。修复 `78a59cd605901f198f21879678ad1002c3064321` 仅为 POSIX 探测设置与 HTTP 服务一致的 SO_REUSEADDR；不设置允许共享监听的 SO_REUSEPORT，Windows 保持独占探测。新增测试先制造 TIME_WAIT，确认可重新绑定，再验证实际监听者仍会被拒绝；没有删除或弱化原有清理断言。
+
+修复后 Windows 启停专项 **11 通过、1 跳过**（POSIX 专用场景），Ruff 通过。修复提交自己的 [CI 41586306961](https://github.com/BennyZ359/DoKnow/actions/runs/41586306961) 已核对：backend、frontend、browser、compose、local-windows 均为 completed / success。Linux TIME_WAIT 回归与 Windows 真实 demo 启停均已在 CI 通过。
+
+本节由后续文档提交补全交付记录。恢复时读取实际 HEAD，并核对该提交自己的 CI；不要将修复提交的结果自动视作后续提交的结果。
 
 本轮先修正普通 SQLite SELECT 会更新源 SHM 的问题，使文件型在线诊断也使用临时副本。并行回归下测试专用的 2 秒服务启动预算不足，改为 10 秒（产品默认仍为 30 秒），保留明确失败/清理断言，随后完整 171 项通过。启动不捕获学习正文、原始异常或模型连接配置，日志只保留安全阶段；状态文件含本机控制令牌，不提交。
 
