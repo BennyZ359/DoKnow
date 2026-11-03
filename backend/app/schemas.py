@@ -149,6 +149,38 @@ class GoalUpdate(VersionedUpdate):
     daily_minutes: Annotated[int, Field(ge=10, le=180, strict=True)] | None = None
 
 
+class CoursePreviewInput(RequestModel):
+    model_config = ConfigDict(extra="forbid")
+    course_version: int = Field(ge=1, strict=True)
+    kind: Literal["regenerate", "difficulty", "reorder"]
+    level: Literal["beginner", "intermediate", "advanced"] | None = None
+    unit_ids: list[Annotated[str, StringConstraints(min_length=36, max_length=36)]] | None = Field(default=None, max_length=6)
+
+    @model_validator(mode="after")
+    def operation_fields(self):
+        required = {"course_version", "kind"}
+        if self.kind == "difficulty":
+            required.add("level")
+        if self.kind == "reorder":
+            required.add("unit_ids")
+        if self.model_fields_set != required or any(getattr(self, key) is None for key in required):
+            raise ValueError("请只提供本次调整需要的字段。")
+        return self
+
+
+class CourseApplyInput(RequestModel):
+    model_config = ConfigDict(extra="forbid")
+    preview_id: Annotated[str, StringConstraints(min_length=36, max_length=36)]
+    confirmed: bool = Field(strict=True)
+
+    @field_validator("confirmed")
+    @classmethod
+    def explicit_confirmation(cls, value):
+        if value is not True:
+            raise ValueError("请先核对预览，再明确确认课程调整。")
+        return value
+
+
 class KnowledgeUpdate(VersionedUpdate):
     title: Title | None = None
     content: NoteContent | None = None

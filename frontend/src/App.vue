@@ -4,15 +4,17 @@ import Icon from './components/Icon.vue'
 import AssessmentDetails from './components/AssessmentDetails.vue'
 import KnowledgeLibrary from './components/KnowledgeLibrary.vue'
 import RecordEditor from './components/RecordEditor.vue'
+import CourseEditor from './components/CourseEditor.vue'
 import SettingsView from './components/SettingsView.vue'
 import { clearEditDraft, forgetRecordEdits } from './editing'
 import type { EditTarget, EditableRecord } from './editing'
 import { api, ApiError, post } from './api'
-import { storageWarning, useDrafts } from './persistence'
+import { removeSaved, storageWarning, useDrafts } from './persistence'
 import { acknowledgeWrite, forgetUnitWrites, pendingWrites, sendWrite } from './writes'
 import type { PendingWrite } from './writes'
 import type {
   Dashboard,
+  CourseState,
   FullUnit,
   Goal,
   KnowledgeAnswer,
@@ -64,6 +66,7 @@ const goalDialog = ref<HTMLDialogElement | null>(null)
 const goalTitleInput = ref<HTMLInputElement | null>(null)
 const goalForm = reactive({ title: '', motivation: '', level: 'beginner', daily_minutes: 30 })
 const editTarget = ref<EditTarget | null>(null)
+const courseTarget = ref<string | null>(null)
 const learnReflection = ref('')
 const practiceAnswer = ref('')
 const historyFilter = ref('all')
@@ -178,6 +181,7 @@ const reviewDue = computed(
 const canSubmit = computed(
   () =>
     !!unit.value &&
+    !unit.value.archived &&
     (activeTab.value === unit.value.stage ||
       (activeTab.value === 'review' && unit.value.stage === 'complete')) &&
     (activeTab.value !== 'review' || reviewDue.value)
@@ -549,7 +553,29 @@ function editorSaved(result: EditableRecord, entry: PendingWrite) {
   void syncCurrent(true)
 }
 
+function courseSaved(result: Goal) {
+  dataEpoch++
+  const current = dashboard.value.goals.find((goal) => goal.id === result.id)
+  if (current && current.course_version < result.course_version) {
+    current.units = result.units
+    current.level = result.level
+    current.course_version = result.course_version
+    current.progress = result.progress
+    if (
+      unit.value?.goal_id === result.id &&
+      !result.units.some((item) => item.id === unit.value?.id)
+    )
+      unit.value.archived = true
+  }
+  notice.value = '课程调整已保存，学习证据、笔记与复习安排已保留。'
+  void syncCurrent(true)
+}
+
 async function confirmWrite(entry: PendingWrite) {
+  if (entry.scope.startsWith('course:')) {
+    courseTarget.value = entry.scope.slice('course:'.length)
+    return
+  }
   if (!entry.payload) {
     notice.value = `请重新选择「${entry.filename}」，将确认同一次导入，不会重复创建资料。`
     if (view.value !== 'knowledge') navigate('knowledge')
@@ -617,7 +643,7 @@ async function submitStage() {
 }
 
 async function sendChat() {
-  if (!unit.value || !chatMessage.value.trim()) return
+  if (!unit.value || unit.value.archived || !chatMessage.value.trim()) return
   const id = unit.value.id
   const sequence = routeSequence
   await run('chat', async () => {
@@ -641,11 +667,23 @@ async function deleteGoal(goal: Goal) {
   if (!window.confirm(`删除「${goal.title}」及其学习记录？已经沉淀到知识库的笔记会保留。`)) return
   const sequence = routeSequence
   await run('delete', async () => {
+    const course = await api<CourseState>(`/goals/${goal.id}/course`)
     await api(`/goals/${goal.id}`, { method: 'DELETE' })
-    const ids = goal.units.map((item) => item.id)
+    const ids = [
+      ...new Set(
+        [
+          ...course.goal.units,
+          ...course.history.flatMap((change) => [...change.before.units, ...change.after.units]),
+        ].map((item) => item.id)
+      ),
+    ]
     drafts.removeUnits(ids)
     forgetUnitWrites(ids)
     forgetRecordEdits({ kind: 'goals', id: goal.id })
+    removeSaved(`course-preview:${goal.id}`, () => true)
+    for (const entry of [...pendingWrites.value]) {
+      if (entry.scope === `course:${goal.id}`) acknowledgeWrite(entry)
+    }
     dataEpoch++
     dashboard.value.goals = dashboard.value.goals.filter((item) => item.id !== goal.id)
     if (sequence === routeSequence) notice.value = '学习目标已删除。'
@@ -963,6 +1001,14 @@ onUnmounted(() => {
                   </button>
                 </div>
                 <h3>{{ goal.title }}</h3>
+                <button
+                  class="text-button"
+                  :aria-label="`调整课程 ${goal.title}`"
+                  :disabled="!!busy"
+                  @click="courseTarget = goal.id"
+                >
+                  调整课程 · 版本 {{ goal.course_version }}
+                </button>
                 <p>{{ goal.motivation || '把理解变成能够独立解决问题的能力。' }}</p>
                 <div class="goal-meta">
                   <span><Icon name="book" :size="15" />{{ goal.units.length }} 个学习单元</span
@@ -1072,6 +1118,14 @@ onUnmounted(() => {
               >
                 编辑目标信息
               </button>
+              <button
+                v-if="currentGoal"
+                class="text-button"
+                :disabled="!!busy"
+                @click="courseTarget = currentGoal.id"
+              >
+                调整课程与查看历史
+              </button>
               <div class="unit-mobile-picker">
                 <label for="unit-select">学习单元</label
                 ><select
@@ -1115,6 +1169,9 @@ onUnmounted(() => {
               </div>
             </aside>
             <div class="study-main">
+              <div v-if="unit.archived" class="alert" role="status">
+                这是已被替换的旧单元，材料与草稿仅供查阅。请从课程列表选择当前单元继续学习。
+              </div>
               <div class="unit-heading">
                 <p class="eyebrow">
                   学习单元
@@ -1461,9 +1518,12 @@ onUnmounted(() => {
                     rows="2"
                     maxlength="4000"
                     placeholder="例如：我这样理解对吗？这个方法还有什么适用边界？"
-                    :disabled="!!busy"
+                    :disabled="!!busy || unit.archived"
                   ></textarea
-                  ><button class="button primary" :disabled="!!busy || !chatMessage.trim()">
+                  ><button
+                    class="button primary"
+                    :disabled="!!busy || unit.archived || !chatMessage.trim()"
+                  >
                     {{ busy === 'chat' ? '思考中…' : '一起思考' }}<Icon name="arrow" :size="17" />
                   </button>
                 </form>
@@ -1688,6 +1748,14 @@ onUnmounted(() => {
     @close="editTarget = null"
     @saving="editorSaving"
     @saved="editorSaved"
+  />
+  <CourseEditor
+    v-if="courseTarget"
+    :key="courseTarget"
+    :goal-id="courseTarget"
+    @close="courseTarget = null"
+    @saving="editorSaving"
+    @saved="courseSaved"
   />
   <dialog ref="goalDialog" class="goal-dialog">
     <form @submit.prevent="createGoal">

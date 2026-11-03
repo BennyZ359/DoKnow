@@ -27,6 +27,7 @@ class Goal(Base):
     daily_minutes: Mapped[int] = mapped_column(Integer, default=30)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    course_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=now_utc)
     units: Mapped[list["Unit"]] = relationship(
         back_populates="goal", cascade="all, delete-orphan", order_by="Unit.position"
@@ -42,6 +43,7 @@ class Unit(Base):
     title: Mapped[str] = mapped_column(String(200))
     objective: Mapped[str] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer)
+    archived: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     stage: Mapped[str] = mapped_column(String(20), default="learn", index=True)
     mastery: Mapped[int] = mapped_column(Integer, default=0)
     material: Mapped[dict] = mapped_column(JSON)
@@ -71,6 +73,20 @@ class LearningSession(Base):
     assessment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     unit: Mapped[Unit] = relationship(back_populates="sessions")
+
+
+class CourseChange(Base):
+    __tablename__ = "course_changes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("goals.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    base_version: Mapped[int] = mapped_column(Integer)
+    goal_version: Mapped[int] = mapped_column(Integer)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    proposal: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class KnowledgeEntry(Base):

@@ -17,17 +17,19 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from .database import make_database
+from . import courses
 from .diagnostics import runtime_report, safe_provider_status
 from .editing import EditConflict, export_note, filter_notes, require_version
 from .migrations import initialize_database
 from .cache import AnswerCache, answer_key
 from .idempotency import DEFER_COMMIT, IdempotentRoute, erase_receipts
-from .models import Goal, KnowledgeEntry, LearningSession, Unit, now_utc
+from .models import CourseChange, Goal, KnowledgeEntry, LearningSession, Unit, now_utc
 from .practice import StalePractice, grade_practice, restart_practice
 from .schemas import ChatInput, GoalInput, GoalUpdate, KnowledgeInput, KnowledgeUpdate, LearnInput, PracticeInput, QuestionInput, ReflectionInput, ReviewInput, SubmissionInput
+from .schemas import CourseApplyInput, CoursePreviewInput
 from .serialization import goal_data, knowledge_data, session_data, unit_data
 from .services.knowledge import answer_question, extract_document
-from .services.learning import evaluate_submission, generate_plan, provider_status, tutor_reply
+from .services.learning import ReplacementPlan, evaluate_submission, generate_plan, provider_status, regenerate_units, tutor_reply
 from .services.providers import ProviderError
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -56,10 +58,12 @@ def get_db(request: Request):
 DB = Annotated[Session, Depends(get_db)]
 
 
-def get_unit(db: Session, unit_id: str) -> Unit:
+def get_unit(db: Session, unit_id: str, *, read_only: bool = False) -> Unit:
     item = db.scalar(select(Unit).where(Unit.id == unit_id).options(selectinload(Unit.goal), selectinload(Unit.sessions)))
     if item is None:
         raise HTTPException(404, "没有找到这个学习单元。")
+    if item.archived and not read_only:
+        raise HTTPException(409, "该单元已被新课程替换，旧材料和草稿保留供查阅。请返回当前课程继续学习。")
     return item
 
 
@@ -177,6 +181,13 @@ def create_app(database_url: str | None = None) -> FastAPI:
             "code": "edit_conflict",
         })
 
+    @application.exception_handler(courses.CourseConflict)
+    async def course_conflict(_: Request, error: courses.CourseConflict):
+        return JSONResponse(status_code=409, content={
+            "detail": "预览后课程或学习记录已变化，或该预览已确认。请读取最新课程并重新预览。",
+            "code": "course_conflict",
+        })
+
     @application.exception_handler(RequestValidationError)
     async def validation_failure(_: Request, error: RequestValidationError):
         # Avoid echoing large learner submissions or invalid Unicode into JSON.
@@ -258,9 +269,69 @@ def create_app(database_url: str | None = None) -> FastAPI:
         save(db)
         return Response(status_code=204)
 
+    @application.get("/api/goals/{goal_id}/course")
+    def fetch_course(goal_id: str, db: DB):
+        goal = courses.load_course(db, goal_id)
+        state = courses.snapshot(db, goal)
+        changes = db.scalars(select(CourseChange).where(
+            CourseChange.goal_id == goal_id, CourseChange.applied_at.is_not(None),
+        ).order_by(CourseChange.base_version.desc())).all()
+        return {"goal": goal_data(goal), "units": [courses.public_unit(unit) for unit in state["units"]],
+                "history": [courses.change_data(change) for change in changes]}
+
+    @application.post("/api/goals/{goal_id}/course/preview", status_code=201)
+    async def preview_course(goal_id: str, body: CoursePreviewInput, db: DB):
+        goal = courses.load_course(db, goal_id)
+        before = courses.snapshot(db, goal)
+        targets = courses.validate_operation(before, body)
+        # Release the read transaction before any provider request.
+        db.rollback()
+        plan = None
+        if body.kind != "reorder":
+            def context(unit):
+                return {key: unit[key] for key in ("title", "objective", "position")}
+            plan = await regenerate_units(before["title"], body.level or before["level"], before["daily_minutes"],
+                                          [context(unit) for unit in targets],
+                                          [context(unit) for unit in before["units"] if unit["retained"]])
+            try:
+                ReplacementPlan.model_validate({"units": [
+                    {key: value for key, value in unit.items() if key != "question_source"} for unit in plan
+                ]})
+                if len(plan) != len(targets):
+                    raise ValueError("replacement count")
+            except (ValueError, TypeError, AttributeError):
+                raise HTTPException(502, "规划服务没有返回完整的待调整单元，请重试；课程尚未改变。")
+        current = courses.load_course(db, goal_id)
+        if courses.snapshot(db, current) != before:
+            raise courses.CourseConflict
+        courses.lock_snapshot(db, goal_id, before)
+        change = CourseChange(goal_id=goal_id, kind=body.kind, base_version=before["course_version"],
+                              goal_version=before["goal_version"], snapshot=before,
+                              proposal=courses.proposal(before, body, plan))
+        db.add(change)
+        save(db)
+        return courses.change_data(change)
+
+    @application.get("/api/goals/{goal_id}/course/previews/{preview_id}")
+    def fetch_course_preview(goal_id: str, preview_id: str, db: DB):
+        change = db.get(CourseChange, preview_id)
+        if change is None or change.goal_id != goal_id:
+            raise HTTPException(404, "没有找到此目标的课程预览，请重新预览。")
+        return courses.change_data(change)
+
+    @application.post("/api/goals/{goal_id}/course/apply")
+    def apply_course(goal_id: str, body: CourseApplyInput, db: DB):
+        goal = courses.load_course(db, goal_id)
+        change = db.get(CourseChange, body.preview_id)
+        if change is None or change.goal_id != goal_id:
+            raise HTTPException(404, "没有找到此目标的课程预览，请重新预览。")
+        courses.apply_change(db, goal, change)
+        save(db)
+        return goal_data(goal)
+
     @application.get("/api/units/{unit_id}")
     def fetch_unit(unit_id: str, db: DB):
-        return unit_data(get_unit(db, unit_id), detailed=True)
+        return unit_data(get_unit(db, unit_id, read_only=True), detailed=True)
 
     @application.post("/api/units/{unit_id}/chat")
     async def chat(unit_id: str, body: ChatInput, db: DB):

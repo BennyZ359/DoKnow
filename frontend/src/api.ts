@@ -34,6 +34,7 @@ export interface Unit {
   title: string
   objective: string
   position: number
+  archived: boolean
   stage: Stage
   mastery: number
   review_due_at: string | null
@@ -72,8 +73,36 @@ export interface Goal {
   created_at: string
   updated_at: string
   version: number
+  course_version: number
   units: Unit[]
   progress: number
+}
+export interface CourseUnit {
+  id: string
+  title: string
+  objective: string
+  position: number
+  retained: boolean
+  replaces?: string
+  lesson?: FullUnit['lesson']
+  project?: FullUnit['project']
+  teach?: FullUnit['teach']
+}
+export interface CourseChange {
+  id: string
+  goal_id: string
+  kind: 'regenerate' | 'difficulty' | 'reorder'
+  base_version: number
+  course_version: number
+  created_at: string
+  applied_at: string | null
+  before: { title: string; level: string; units: CourseUnit[] }
+  after: { level: string; units: CourseUnit[] }
+}
+export interface CourseState {
+  goal: Goal
+  units: CourseUnit[]
+  history: CourseChange[]
 }
 export interface Dashboard {
   goals: Goal[]

@@ -26,6 +26,7 @@ def session_data(item: LearningSession) -> dict:
 def unit_data(item: Unit, detailed: bool = False) -> dict:
     result = {"id": item.id, "goal_id": item.goal_id, "goal_title": item.goal.title,
               "title": item.title, "objective": item.objective, "position": item.position,
+              "archived": bool(item.archived),
               "stage": item.stage, "mastery": item.mastery, "review_due_at": timestamp(item.review_due_at),
               "review_count": item.review_count, "completed_at": timestamp(item.completed_at)}
     if detailed:
@@ -38,11 +39,13 @@ def unit_data(item: Unit, detailed: bool = False) -> dict:
 
 
 def goal_data(item: Goal) -> dict:
-    units = [unit_data(unit) for unit in item.units]
-    progress = round(sum(STAGE_PROGRESS.get(unit.stage, 0) for unit in item.units) / len(units)) if units else 0
+    active = sorted((unit for unit in item.units if not unit.archived), key=lambda unit: unit.position)
+    units = [unit_data(unit) for unit in active]
+    progress = round(sum(STAGE_PROGRESS.get(unit.stage, 0) for unit in active) / len(units)) if units else 0
     return {"id": item.id, "title": item.title, "motivation": item.motivation, "level": item.level,
             "daily_minutes": item.daily_minutes, "created_at": timestamp(item.created_at),
             "version": item.version, "updated_at": timestamp(item.updated_at or item.created_at),
+            "course_version": item.course_version,
             "units": units, "progress": progress}
 
 

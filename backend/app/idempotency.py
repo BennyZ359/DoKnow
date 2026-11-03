@@ -178,6 +178,8 @@ def response_scope(request: Request, db: Session, response: Response) -> str:
     if unit_id:
         unit = db.get(Unit, unit_id)
         return f"goal:{unit.goal_id}"
+    if "goal_id" in request.path_params:
+        return f"goal:{request.path_params['goal_id']}"
     result = json.loads(response.body)
     kind = "goal" if request.url.path == "/api/goals" or "goal_id" in request.path_params else "knowledge"
     return f"{kind}:{result['id']}"
@@ -188,7 +190,7 @@ class IdempotentRoute(APIRoute):
         original = super().get_route_handler()
         protected = (self.path in {"/api/goals", "/api/knowledge", "/api/knowledge/import",
                                    "/api/goals/{goal_id}", "/api/knowledge/{entry_id}"}
-                     or self.path.startswith("/api/units/"))
+                     or self.path.startswith(("/api/units/", "/api/goals/")))
 
         async def handler(request: Request) -> Response:
             keys = request.headers.getlist("Idempotency-Key")

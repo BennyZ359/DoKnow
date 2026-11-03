@@ -44,6 +44,12 @@ backend\.venv\Scripts\python.exe scripts/local.py stop
 
 如果 `.venv` 尚未安装，可用现有 Python 3.11+ 执行 `python scripts/local.py diagnose`，它会报告缺失环境。macOS / Linux 使用 `backend/.venv/bin/python scripts/local.py ...`；Windows 是本轮主要实际验证环境，Linux 在 CI 验证进程测试。
 
+## 体验课程调整
+
+在 demo 模式新建一个目标，从学习页选择「调整课程与查看历史」（概览卡片也有入口）。选择重生成、难度或重排，先预览，再勾选确认。已保存聊天或学习记录的单元固定保留；预览后又产生学习记录时需重新预览。旧单元可从变更记录打开，只读显示原材料和原 ID 下的草稿。demo 重生成是确定性模板，同一难度可能得到相同内容。
+
+应用数据库版本现在为 `0005_course_changes`。本轮只升级独立测试库，正式学习库未升级；去掉 `--demo` 前请先按 [数据管理](DATA_MANAGEMENT.md) 备份。课程预览和确认的网络失败可用「恢复」按钮确认原操作；不要为了恢复结果重复创建课程。完整规则见 [COURSE_ADJUSTMENTS.md](COURSE_ADJUSTMENTS.md)。
+
 ## 参数、重复启动与停止规则
 
 ```powershell

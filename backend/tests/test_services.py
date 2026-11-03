@@ -38,6 +38,33 @@ def test_plan_rejects_bad_correct_index_and_duplicate_options():
         learning.PlanUnit.model_validate(unit)
 
 
+def test_demo_course_replacement_tracks_topics_after_reordering():
+    original = learning._demo_plan("Python", "beginner", 20)
+    targets = [{"title": original[index]["title"], "objective": original[index]["objective"], "position": position}
+               for position, index in enumerate([2, 0])]
+    units = asyncio.run(learning.regenerate_units("Python", "advanced", 45, targets, [original[1]]))
+    assert [unit["title"] for unit in units] == [target["title"] for target in targets]
+    assert all("设计反例" in unit["lesson"]["explanation"] for unit in units)
+    assert all(unit["question_source"]["source"] == "demo" for unit in units)
+
+
+def test_course_replacement_sends_retained_topics_and_preserves_provider_evidence(monkeypatch):
+    monkeypatch.setattr(learning, "provider_status", lambda: {"mode": "ai"})
+    targets = [{"title": "待学习的函数", "objective": "验证返回值", "position": 2}]
+    retained = [{"title": "已有的变量", "objective": "区分文本与数字", "position": 0}]
+    async def fake_complete(messages, *, schema, metadata):
+        assert schema is learning.ReplacementPlan
+        payload = json.loads(messages[-1]["content"])
+        assert payload["targets"] == targets and payload["retained"] == retained
+        assert payload["level"] == "advanced" and payload["daily_minutes"] == 45
+        metadata.update(source="ai", provider="compatible", requested_model="requested", model="returned")
+        return {"units": [learning._demo_plan("Python", "advanced", 45)[2]]}
+    monkeypatch.setattr(learning, "complete", fake_complete)
+    units = asyncio.run(learning.regenerate_units("Python", "advanced", 45, targets, retained))
+    assert len(units) == 1
+    assert units[0]["question_source"] == {"source": "ai", "provider": "compatible", "requested_model": "requested", "model": "returned", "rule_version": "ai-bank-v1"}
+
+
 def test_demo_assessment_rejects_length_without_evidence():
     unit = learning._demo_plan("Python", "beginner", 20)[0]
     for kind in ("project", "teach", "review"):

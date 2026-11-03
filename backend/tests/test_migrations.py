@@ -59,7 +59,7 @@ def test_new_database_and_repeated_startup(tmp_path):
     try:
         assert initialize_database(engine) == CURRENT
         assert initialize_database(engine) == CURRENT
-        assert set(inspect(engine).get_table_names()) == {*LEGACY_TABLES, "request_receipts", "alembic_version"}
+        assert set(inspect(engine).get_table_names()) == {*LEGACY_TABLES, "request_receipts", "course_changes", "alembic_version"}
     finally:
         engine.dispose()
 
@@ -251,3 +251,50 @@ def test_learning_revision_upgrade_preserves_evidence_and_receipts(legacy, monke
     assert snapshot() == before
     with engine.connect() as connection:
         assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ("0003_learning_evidence" if fail else CURRENT)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_editable_revision_upgrade_preserves_all_values_and_rolls_back(legacy, monkeypatch, fail):
+    _, engine, sessions, unit_id = legacy
+    from app import migrations
+    with engine.begin() as connection:
+        config = configuration()
+        config.attributes["connection"] = connection
+        migrations.command.stamp(config, "0001_baseline")
+        migrations.command.upgrade(config, "0004_editable_records")
+        connection.execute(text("UPDATE goals SET version=3"))
+        connection.execute(text("UPDATE knowledge_entries SET version=4, tags=:tags, original=:original"),
+                           {"tags": '["原标签"]', "original": '{"title":"原始标题","content":"原始证据"}'})
+        connection.execute(text("UPDATE learning_sessions SET assessment=:value"), {"value": '{"source":"demo","passed":true}'})
+        connection.execute(text("UPDATE units SET practice_state=:value"), {"value": '{"round":2,"attempt":4}'})
+        connection.exec_driver_sql("""INSERT INTO request_receipts VALUES (
+            'editable-receipt', 'fingerprint', 'owner', 'complete', '2026-11-01 00:00:00',
+            200, '{"feedback":"original receipt"}', '2026-11-01 00:00:00',
+            '2026-11-01 00:00:00', 'goal:existing')""")
+    names = (*LEGACY_TABLES, "request_receipts")
+    columns = {name: ', '.join(f'"{column["name"]}"' for column in inspect(engine).get_columns(name)) for name in names}
+    def capture():
+        with engine.connect() as connection:
+            return {name: connection.exec_driver_sql(f'SELECT {columns[name]} FROM "{name}"').all() for name in names}
+    before = capture()
+    if fail:
+        upgrade = migrations.command.upgrade
+        def broken(*args, **kwargs):
+            upgrade(*args, **kwargs)
+            raise RuntimeError("course migration interrupted")
+        monkeypatch.setattr(migrations.command, "upgrade", broken)
+        with pytest.raises(RuntimeError, match="interrupted"):
+            initialize_database(engine)
+        assert "course_changes" not in inspect(engine).get_table_names()
+        assert "archived" not in {column["name"] for column in inspect(engine).get_columns("units")}
+        assert "course_version" not in {column["name"] for column in inspect(engine).get_columns("goals")}
+    else:
+        assert initialize_database(engine) == CURRENT
+        assert initialize_database(engine) == CURRENT
+        with sessions() as db:
+            unit = db.get(Unit, unit_id)
+            assert unit.archived == 0 and unit.goal.course_version == 1
+            assert unit.version == 7 and unit.goal.version == 3
+    assert capture() == before
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ("0004_editable_records" if fail else CURRENT)

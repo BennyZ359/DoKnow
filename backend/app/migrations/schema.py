@@ -87,3 +87,22 @@ def editable_metadata() -> MetaData:
     metadata.tables["knowledge_entries"].append_column(Column("tags", JSON, nullable=True))
     metadata.tables["knowledge_entries"].append_column(Column("original", JSON, nullable=True))
     return metadata
+
+
+def course_metadata() -> MetaData:
+    metadata = editable_metadata()
+    metadata.tables["goals"].append_column(Column("course_version", Integer, nullable=False, server_default=text("1")))
+    metadata.tables["units"].append_column(Column("archived", Integer, nullable=False, server_default=text("0")))
+    Table(
+        "course_changes", metadata,
+        Column("id", String(36), primary_key=True),
+        Column("goal_id", String(36), ForeignKey("goals.id", ondelete="CASCADE"), nullable=False, index=True),
+        Column("kind", String(20), nullable=False),
+        Column("base_version", Integer, nullable=False),
+        Column("goal_version", Integer, nullable=False),
+        Column("snapshot", JSON, nullable=False),
+        Column("proposal", JSON, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("applied_at", DateTime(timezone=True), nullable=True),
+    )
+    return metadata
