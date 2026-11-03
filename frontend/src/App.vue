@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import Icon from './components/Icon.vue'
+import AssessmentDetails from './components/AssessmentDetails.vue'
 import { api, ApiError, post } from './api'
 import { storageWarning, useDrafts } from './persistence'
 import { acknowledgeWrite, forgetUnitWrites, pendingWrites, sendWrite } from './writes'
@@ -59,6 +60,17 @@ const goalTitleInput = ref<HTMLInputElement | null>(null)
 const goalForm = reactive({ title: '', motivation: '', level: 'beginner', daily_minutes: 30 })
 const learnReflection = ref('')
 const practiceAnswer = ref('')
+const historyFilter = ref('all')
+const visibleHistory = computed(() =>
+  [...(unit.value?.sessions || [])]
+    .reverse()
+    .filter(
+      (session) =>
+        historyFilter.value === 'all' ||
+        (historyFilter.value === 'assessments' && session.score !== null) ||
+        (historyFilter.value === 'mistakes' && session.kind === 'practice' && session.score === 0)
+    )
+)
 const projectContent = ref('')
 const teachContent = ref('')
 const reflection = reactive({ content: '', takeaway: '', change: '' })
@@ -74,6 +86,15 @@ const selectedNote = ref<string | null>(null)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const drafts = useDrafts()
 const draftScope = (kind: string) => () => (unit.value ? `unit:${unit.value.id}:${kind}` : null)
+const practiceScope = () =>
+  unit.value
+    ? `unit:${unit.value.id}:practice:${unit.value.practice.question_id}:${unit.value.practice.token}`
+    : null
+const practicePayload = () => ({
+  answer: practiceAnswer.value,
+  question_id: unit.value?.practice.question_id || '',
+  token: unit.value?.practice.token || '',
+})
 drafts.bind(
   () => 'goal',
   () => ({ ...goalForm }),
@@ -91,13 +112,9 @@ drafts.bind(
     learnReflection.value = String(value.reflection)
   }
 )
-drafts.bind(
-  draftScope('practice'),
-  () => ({ answer: practiceAnswer.value }),
-  (value) => {
-    practiceAnswer.value = String(value.answer)
-  }
-)
+drafts.bind(practiceScope, practicePayload, (value) => {
+  practiceAnswer.value = String(value.answer)
+})
 drafts.bind(
   draftScope('project'),
   () => ({ content: projectContent.value }),
@@ -436,7 +453,8 @@ async function createGoal() {
 
 function applySubmission(result: Submission, entry: PendingWrite, sequence: number) {
   dataEpoch++
-  if (result.passed !== false) drafts.clearSubmitted(entry.scope, entry.payload)
+  if (result.passed !== false || entry.path.endsWith('/practice'))
+    drafts.clearSubmitted(entry.scope, entry.payload)
   acknowledgeWrite(entry)
   updateSummaryUnit(result.unit)
   if (sequence !== routeSequence || unit.value?.id !== result.unit.id) return
@@ -504,7 +522,7 @@ async function submitStage() {
   const sequence = routeSequence
   const bodies: Record<string, Record<string, unknown>> = {
     learn: { reflection: learnReflection.value },
-    practice: { answer: practiceAnswer.value },
+    practice: practicePayload(),
     project: { content: projectContent.value },
     teach: { content: teachContent.value },
     reflect: reflection,
@@ -514,7 +532,7 @@ async function submitStage() {
     const { result, entry } = await sendWrite<Submission>(
       `/units/${currentId}/${currentStage}`,
       bodies[currentStage],
-      `unit:${currentId}:${currentStage}`,
+      currentStage === 'practice' ? practiceScope()! : `unit:${currentId}:${currentStage}`,
       `${stageLabel(currentStage)} · ${unit.value?.title || ''}`
     )
     applySubmission(result, entry, sequence)
@@ -1075,6 +1093,17 @@ onUnmounted(() => {
                   </div>
                   <h3>能理解，也能辨别</h3>
                   <p class="prose question-text">{{ unit.practice.question }}</p>
+                  <p class="practice-progress" role="status">
+                    第 {{ unit.practice.round }} 轮 · 已通过 {{ unit.practice.correct }} /
+                    {{ unit.practice.total }} 题
+                    <span v-if="unit.practice.is_retry"> · 错题补练</span>
+                  </p>
+                  <p v-if="unit.practice.legacy" class="panel-intro">
+                    这是旧版单题课程，原始记录保持不变。新建学习目标可使用多题与变式练习。
+                  </p>
+                  <p v-else class="panel-intro">
+                    全部题目答对后进入实战；答错的题目会排到后面补练。
+                  </p>
                   <fieldset class="practice-options">
                     <legend class="sr-only">选择你的答案</legend>
                     <label
@@ -1305,6 +1334,7 @@ onUnmounted(() => {
                     ><span v-if="feedback.score !== undefined">{{ feedback.score }} 分</span>
                   </div>
                   <p class="prose">{{ feedback.feedback }}</p>
+                  <AssessmentDetails :assessment="feedback.assessment" />
                   <button
                     v-if="feedback.passed !== false && unit.stage !== activeTab"
                     class="button primary"
@@ -1349,7 +1379,16 @@ onUnmounted(() => {
                 <p v-if="!unit.sessions.length" class="panel-intro">
                   留下第一份理解，这里就会有你的学习足迹。
                 </p>
-                <article v-for="session in [...unit.sessions].reverse()" :key="session.id">
+                <label for="history-filter">筛选学习足迹</label>
+                <select id="history-filter" v-model="historyFilter">
+                  <option value="all">全部记录</option>
+                  <option value="assessments">评价记录</option>
+                  <option value="mistakes">错题记录</option>
+                </select>
+                <p v-if="unit.sessions.length && !visibleHistory.length" class="panel-intro">
+                  没有符合筛选条件的记录。
+                </p>
+                <article v-for="session in visibleHistory" :key="session.id">
                   <div>
                     <strong>{{ activityLabel(session.kind) }}</strong
                     ><time>{{ date(session.created_at, true) }}</time
@@ -1357,6 +1396,7 @@ onUnmounted(() => {
                   </div>
                   <p class="prose">{{ session.content }}</p>
                   <p class="session-feedback prose">{{ session.feedback }}</p>
+                  <AssessmentDetails :assessment="session.assessment" />
                 </article>
               </details>
             </div>

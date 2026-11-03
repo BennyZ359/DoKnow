@@ -10,7 +10,8 @@ from sqlalchemy import inspect, select, text
 
 from app.database import make_database
 from app.migrations import CURRENT, MigrationError, initialize_database
-from app.models import KnowledgeEntry, Unit
+from app.migrations.schema import baseline_metadata
+from app.models import KnowledgeEntry, LearningSession, Unit
 
 
 LEGACY_TABLES = ("goals", "units", "learning_sessions", "knowledge_entries")
@@ -46,8 +47,10 @@ def legacy(tmp_path):
 
 
 def evidence_snapshot(engine):
+    columns = {name: ", ".join(f'"{column.name}"' for column in table.columns)
+               for name, table in baseline_metadata().tables.items()}
     with engine.connect() as connection:
-        return {name: [tuple(row) for row in connection.exec_driver_sql(f'SELECT * FROM "{name}" ORDER BY id')]
+        return {name: [tuple(row) for row in connection.exec_driver_sql(f'SELECT {columns[name]} FROM "{name}" ORDER BY id')]
                 for name in LEGACY_TABLES}
 
 
@@ -97,7 +100,7 @@ def test_unrecognized_legacy_schema_is_never_stamped(legacy, change):
     assert "alembic_version" not in inspect(engine).get_table_names()
     assert "request_receipts" not in inspect(engine).get_table_names()
     with sessions() as session:
-        assert session.get(Unit, unit_id).mastery == 85
+        assert session.scalar(select(Unit.mastery).where(Unit.id == unit_id)) == 85
 
 
 def test_versioned_schema_drift_and_future_revision_are_rejected(legacy):
@@ -130,7 +133,7 @@ def test_migration_failure_rolls_back_version_and_ddl(legacy, monkeypatch):
         initialize_database(engine)
     assert set(inspect(engine).get_table_names()) == set(LEGACY_TABLES)
     with sessions() as session:
-        assert session.get(Unit, unit_id).sessions[0].content == "过去的复盘内容"
+        assert session.scalar(select(LearningSession.content).where(LearningSession.unit_id == unit_id)) == "过去的复盘内容"
 
 
 def test_invalid_relationships_block_upgrade(legacy):
@@ -149,3 +152,52 @@ def test_memory_database_supported():
         assert initialize_database(engine) == CURRENT
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_receipt_revision_upgrade_preserves_every_existing_value(legacy, monkeypatch, fail):
+    path, engine, sessions, unit_id = legacy
+    # Freeze the prior revision independently from the new application models.
+    with sqlite3.connect(path) as connection:
+        connection.executescript('''
+            CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY);
+            INSERT INTO alembic_version VALUES ('0002_request_receipts');
+            CREATE TABLE request_receipts (
+                key VARCHAR(128) NOT NULL PRIMARY KEY, fingerprint VARCHAR(64) NOT NULL,
+                owner_token VARCHAR(36) NOT NULL, status VARCHAR(16) NOT NULL,
+                lease_until DATETIME NOT NULL, response_status INTEGER, response_body TEXT,
+                created_at DATETIME NOT NULL, completed_at DATETIME, resource_scope VARCHAR(80)
+            );
+            INSERT INTO request_receipts VALUES (
+                'original-key', 'fingerprint', 'owner', 'completed', '2026-11-01 00:00:00',
+                200, '{"feedback":"original result"}', '2026-11-01 00:00:00',
+                '2026-11-01 00:00:00', 'goal:existing'
+            );
+        ''')
+    before = evidence_snapshot(engine)
+    with engine.connect() as connection:
+        receipt = connection.exec_driver_sql("SELECT * FROM request_receipts").all()
+    if fail:
+        from app import migrations
+        original = migrations.command.upgrade
+
+        def fail_after_columns(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("failure after new columns")
+
+        monkeypatch.setattr(migrations.command, "upgrade", fail_after_columns)
+        with pytest.raises(RuntimeError, match="new columns"):
+            initialize_database(engine)
+        assert "practice_state" not in {column["name"] for column in inspect(engine).get_columns("units")}
+        assert "assessment" not in {column["name"] for column in inspect(engine).get_columns("learning_sessions")}
+    else:
+        assert initialize_database(engine) == CURRENT
+        assert initialize_database(engine) == CURRENT
+        with sessions() as session:
+            assert session.get(Unit, unit_id).practice_state is None
+            assert session.scalar(select(LearningSession)).assessment is None
+    assert evidence_snapshot(engine) == before
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT * FROM request_receipts").all() == receipt
+        revision = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
+        assert revision == ("0002_request_receipts" if fail else CURRENT)

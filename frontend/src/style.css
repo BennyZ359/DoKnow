@@ -3159,3 +3159,28 @@ main {
     scroll-behavior: auto !important;
   }
 }
+/* Assessment history remains readable on narrow screens and for long model names. */
+.assessment-details {
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border, #ddd);
+  font-size: 0.85rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.assessment-details .pill {
+  margin-right: 0.5rem;
+}
+.assessment-details p {
+  margin: 0.4rem 0;
+}
+.question-evidence {
+  margin-top: 0.7rem;
+}
+.practice-progress {
+  font-weight: 600;
+}
+#history-filter {
+  margin: 0.6rem 0;
+  max-width: 100%;
+}

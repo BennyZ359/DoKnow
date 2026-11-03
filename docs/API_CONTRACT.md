@@ -2,7 +2,7 @@
 
 Base `/api`. Single local learner; no public multi-user/auth claims. All API timestamps ISO UTC. Vue frontend uses proxy `/api`.
 
-All identifiers are UUID strings. Validation errors return 422 with `{detail:[{loc,msg,type}]}` without echoing learner inputs. Invalid Unicode/NUL strings are rejected. Provider failures return a safe 502 without changing progress. Reflection schedules first recall one day later; early reviews return 409.
+Resource identifiers are UUID strings. Question identifiers and practice tokens are opaque, unit-local strings. Validation errors return 422 with `{detail:[{loc,msg,type}]}` without echoing learner inputs. Invalid Unicode/NUL strings are rejected. Provider failures return a safe 502 without changing progress. Reflection schedules first recall one day later; early reviews return 409.
 
 ## Core endpoints
 
@@ -10,15 +10,25 @@ All identifiers are UUID strings. Validation errors return 422 with `{detail:[{l
 - `GET /dashboard` -> `{goals, reviews_due, total_sessions, knowledge_count, recent_activity}`. `goals` contains the goal objects below.
 - `GET /goals` -> array of goals. `POST /goals` body `{title, motivation, level: beginner|intermediate|advanced, daily_minutes: 10..180}` -> goal including generated units. `GET /goals/{id}` -> goal. `DELETE /goals/{id}` -> 204.
 - Goal: `{id,title,motivation,level,daily_minutes,created_at,units:[{id,title,objective,position,stage,mastery,review_due_at,review_count,completed_at}],progress}`. Stages `learn`, `practice`, `project`, `teach`, `reflect`, `review`, `complete`. `progress` 0..100.
-- `GET /units/{id}` -> unit with `goal_id,goal_title,lesson:{explanation,example,question},practice:{question,options},project:{title,brief,criteria},teach:{prompt,checklist},sessions:[]`. Practice `correct_index` and the answer explanation MUST NOT be returned; assessment occurs server-side and the submission feedback supplies its explanation.
+- `GET /units/{id}` -> unit with `goal_id,goal_title,lesson:{explanation,example,question},practice,project:{title,brief,criteria},teach:{prompt,checklist},sessions:[]`. Practice contains only the active question and progress (see below). Private answer keys, future questions and their explanations MUST NOT be returned; submission feedback explains the answered question.
 - `POST /units/{id}/chat` `{message}` -> `{reply,mode}`; messages persisted as sessions (kind chat, content user message, feedback reply).
 - `POST /units/{id}/learn` `{reflection}` -> `{unit,feedback}`. At least 20 non-whitespace characters. Advances learn to practice only.
-- `POST /units/{id}/practice` `{answer}` -> `{unit,feedback,score,passed}`. answer string, multiple-choice index `0`, `1`, etc. Fail keeps practice; pass advances project. Repeat safe stage gating.
-- `POST /units/{id}/project` `{content}` -> `{unit,feedback,score,passed}`. Meaningful project artifact assessed; pass advances teach.
-- `POST /units/{id}/teach` `{content}` -> `{unit,feedback,score,passed}`. Teach-back assessed for conceptual correctness, example, boundary; pass advances reflect.
+- `POST /units/{id}/practice` `{answer,question_id,token}` -> `{unit,feedback,score,passed,practice_complete,assessment}`. `answer` is the index in the displayed options, encoded as a string (`"0"`, `"1"`, etc.). `passed` describes this attempt; only `practice_complete: true` advances to project. Missing or stale question identity returns 409 without recording an attempt. Existing single-question courses still accept `{answer}`.
+- `POST /units/{id}/project` `{content}` -> `{unit,feedback,score,passed,assessment}`. Meaningful project artifact assessed; pass advances teach.
+- `POST /units/{id}/teach` `{content}` -> `{unit,feedback,score,passed,assessment}`. Teach-back assessed for conceptual correctness, example, boundary; pass advances reflect.
 - `POST /units/{id}/reflect` `{content,takeaway,change}` -> `{unit,feedback}`. Content >=20 and takeaway/change >=10 characters; creates knowledge note and review schedule, advances review.
-- `GET /reviews` -> array of unit objects (with goal_title) due now. `POST /units/{id}/review` `{rating: 1|2|3|4,answer}` -> `{unit,feedback,score,passed}`. Recall assessment limits self-rating; poor recall returns practice, successful recall advances complete and schedules next review. Complete remains eligible for scheduled review. Other stage attempts -> 409. Learner can practice failed review then repeat loop.
-- Sessions: `{id,unit_id,kind,content,feedback,score,created_at}`.
+- `GET /reviews` -> array of unit objects (with goal_title) due now. `POST /units/{id}/review` `{rating: 1|2|3|4,answer}` -> `{unit,feedback,score,passed,assessment}`. Recall assessment limits self-rating; poor recall starts a new practice round, successful recall advances complete and schedules next review. Complete remains eligible for scheduled review. Other stage attempts -> 409. Learner can practice failed review then repeat loop.
+- Sessions: `{id,unit_id,kind,content,feedback,score,created_at,assessment}`.
+
+## Practice progress and assessment evidence
+
+Public `practice` is `{question_id,token,question,options,total,correct,remaining,round,attempt,is_retry,legacy}`. New demo units have three questions; AI plans require one primary question plus two to four different scenario variants. An incorrect answer moves that question to the end of the queue; each distinct question must be answered correctly to finish. Options are deterministically reordered for each attempt, remaining stable across reads and restarts. Legacy single-question courses preserve their original option order and material.
+
+`round` and `attempt` are one-based display counters. `round` increments only when failed recall starts new practice, independently of `review_count`. New rounds clear completion and mistake state and rotate the starting question; prior attempt history remains intact. Completed rounds have `question_id: null` and no options. Clients submit the exact question identity and token they displayed, scope drafts to that identity, and refresh after a conflict. Replaying an idempotency receipt returns the original assessment, without grading the next question.
+
+Each scored session stores an `assessment` snapshot. `source` is `demo` (structural check), `ai` (model evaluation), `answer_key` (server-side choice grading), or `unknown`. New evidence includes `passed` and the relevant `rule_version`, `provider`, `requested_model`, and response `model`; absent model information is null, not inferred from later settings. Legacy scored records return `{source:"unknown"}`; unscored records have null assessment.
+
+Choice assessments additionally store `question_id`, `question`, displayed `options`, `selected_answer`, `correct_answer`, `round`, `attempt`, `was_retry`, and `question_source` (the question bank provenance). Only the submitted question's answer is disclosed. Review assessments preserve both `evaluation_passed` and `self_rating`; `passed` reflects the final progression decision, including a self-rating of 1 requiring further practice. No credentials, base URLs, or raw provider responses are stored in provenance.
 
 ## Knowledge endpoints
 
@@ -32,9 +42,9 @@ All identifiers are UUID strings. Validation errors return 422 with `{detail:[{l
 ## Provider module contract (pure service layer)
 
 `app.services.learning`:
-- `async generate_plan(title: str, level: str, daily_minutes: int) -> list[dict]` (3-6 units each `{title,objective,lesson:{explanation,example,question},practice:{question,options,correct_index,explanation},project:{title,brief,criteria},teach:{prompt,checklist}}`).
+- `async generate_plan(title: str, level: str, daily_minutes: int) -> list[dict]` (3-6 units each `{title,objective,lesson:{explanation,example,question},practice:{question,options,correct_index,explanation},practice_variants:[practice,...],question_source,project:{title,brief,criteria},teach:{prompt,checklist}}`). Variants contain 2-4 distinct question prompts; question provenance is attached server-side after provider validation.
 - `async tutor_reply(goal_title: str, unit: dict, message: str, history: list[dict]) -> dict` `{reply,mode}`.
-- `async evaluate_submission(kind: str, unit: dict, content: str) -> dict` `{score:0..100,passed:bool,feedback:str}`. kind project, teach, review; pass threshold 70; demo score conservative, does not pretend AI judgment.
+- `async evaluate_submission(kind: str, unit: dict, content: str) -> dict` `{score:0..100,passed:bool,feedback:str,provenance}`. kind project, teach, review; pass threshold 70; demo checks structure only. Provenance is captured from the configuration used for that request and the provider's response model field, not generated by the model's assessment text.
 - `provider_status() -> dict` `{mode,provider,model,configured,limitations}`.
 
 `app.services.knowledge`:

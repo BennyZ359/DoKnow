@@ -22,7 +22,7 @@ def test_topic_specific_curricula_are_valid():
         units = asyncio.run(learning.generate_plan(topic, "beginner", 25))
         assert len(units) == 3
         assert marker in units[0]["title"]
-        learning.Plan.model_validate({"units": units})
+        learning.Plan.model_validate({"units": [{key: value for key, value in unit.items() if key != "question_source"} for unit in units]})
         assert len({unit["practice"]["question"] for unit in units}) == 3
         assert "25" in units[0]["lesson"]["explanation"]
 
@@ -314,12 +314,18 @@ def test_ai_provider_http_contract_through_persisted_learning_api(monkeypatch, t
         chat = client.post(f"/api/units/{unit_id}/chat", json={"message": "为什么需要转换输入？"})
         assert chat.status_code == 200 and chat.json()["mode"] == "ai"
         assert client.post(f"/api/units/{unit_id}/learn", json={"reflection": "变量让名字指向值，字符串用于文字，输入要先转换为整数才能进行数值计算。"}).status_code == 200
-        assert client.post(f"/api/units/{unit_id}/practice", json={"answer": "1"}).json()["passed"] is True
+        for item in [plan[0]["practice"], *plan[0]["practice_variants"]]:
+            active = client.get(f"/api/units/{unit_id}").json()["practice"]
+            response = client.post(f"/api/units/{unit_id}/practice", json={
+                "answer": str(active["options"].index(item["options"][item["correct_index"]])),
+                "question_id": active["question_id"], "token": active["token"],
+            })
+            assert response.status_code == 200 and response.json()["passed"] is True
         project = client.post(f"/api/units/{unit_id}/project", json={"content": "使用price和count变量计算购物总价，输入12和3得到36，数量0这个边界得到0，与预期一致。"})
         assert project.status_code == 200
         assert project.json()["unit"]["stage"] == "teach" and project.json()["score"] == 85
         sessions = client.get(f"/api/units/{unit_id}").json()["sessions"]
-        assert [item["kind"] for item in sessions] == ["chat", "learn", "practice", "project"]
+        assert [item["kind"] for item in sessions] == ["chat", "learn", "practice", "practice", "practice", "project"]
     assert len(captured) == 3
     tutor_input = json.loads(captured[1]["messages"][-1]["content"])
     assert "practice" not in tutor_input["unit"]

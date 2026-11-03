@@ -42,6 +42,7 @@ class Unit(Base):
     stage: Mapped[str] = mapped_column(String(20), default="learn", index=True)
     mastery: Mapped[int] = mapped_column(Integer, default=0)
     material: Mapped[dict] = mapped_column(JSON)
+    practice_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     review_streak: Mapped[int] = mapped_column(Integer, default=0)
@@ -64,6 +65,7 @@ class LearningSession(Base):
     content: Mapped[str] = mapped_column(Text)
     feedback: Mapped[str] = mapped_column(Text)
     score: Mapped[int | None] = mapped_column(Integer)
+    assessment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     unit: Mapped[Unit] = relationship(back_populates="sessions")
 

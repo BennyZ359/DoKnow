@@ -54,6 +54,7 @@ def baseline_metadata() -> MetaData:
 
 
 def current_metadata() -> MetaData:
+    """Frozen revision 0002; keep this definition stable for existing databases."""
     metadata = baseline_metadata()
     Table(
         "request_receipts", metadata,
@@ -68,4 +69,11 @@ def current_metadata() -> MetaData:
         Column("completed_at", DateTime(timezone=True), nullable=True),
         Column("resource_scope", String(80), nullable=True),
     )
+    return metadata
+
+
+def learning_metadata() -> MetaData:
+    metadata = current_metadata()
+    metadata.tables["units"].append_column(Column("practice_state", JSON, nullable=True))
+    metadata.tables["learning_sessions"].append_column(Column("assessment", JSON, nullable=True))
     return metadata

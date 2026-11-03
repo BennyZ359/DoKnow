@@ -8,10 +8,11 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
-from .schema import baseline_metadata, current_metadata
+from .schema import baseline_metadata, current_metadata, learning_metadata
 
 BASELINE = "0001_baseline"
-CURRENT = "0002_request_receipts"
+RECEIPTS = "0002_request_receipts"
+CURRENT = "0003_learning_evidence"
 VERSION_TABLE = "alembic_version"
 
 
@@ -89,8 +90,10 @@ def validate_schema(connection: Connection, expected: MetaData, *, versioned: bo
 def metadata_for_revision(revision: str) -> MetaData:
     if revision == BASELINE:
         return baseline_metadata()
-    if revision == CURRENT:
+    if revision == RECEIPTS:
         return current_metadata()
+    if revision == CURRENT:
+        return learning_metadata()
     raise MigrationError("Database revision is unknown to this application; use the matching application version.")
 
 

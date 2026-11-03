@@ -50,6 +50,8 @@ class LearnInput(RequestModel):
 
 class PracticeInput(RequestModel):
     answer: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+    question_id: Annotated[str, StringConstraints(max_length=40)] | None = None
+    token: Annotated[str, StringConstraints(max_length=80)] | None = None
 
 
 class SubmissionInput(RequestModel):

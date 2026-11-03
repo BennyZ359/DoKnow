@@ -21,6 +21,7 @@ from .migrations import initialize_database
 from .cache import AnswerCache, answer_key
 from .idempotency import DEFER_COMMIT, IdempotentRoute, erase_receipts
 from .models import Goal, KnowledgeEntry, LearningSession, Unit, now_utc
+from .practice import StalePractice, grade_practice, restart_practice
 from .schemas import ChatInput, GoalInput, KnowledgeInput, LearnInput, PracticeInput, QuestionInput, ReflectionInput, ReviewInput, SubmissionInput
 from .serialization import goal_data, knowledge_data, session_data, unit_data
 from .services.knowledge import answer_question, extract_document
@@ -65,9 +66,11 @@ def require_stage(unit: Unit, *allowed: str):
         raise HTTPException(409, f"当前阶段为 {unit.stage}，请按学习证据完成前面的阶段。")
 
 
-def record(db: Session, unit: Unit, kind: str, content: str, feedback: str, score: int | None = None):
+def record(db: Session, unit: Unit, kind: str, content: str, feedback: str, score: int | None = None,
+           evaluation: dict | None = None):
     unit.updated_at = now_utc()
-    evidence = LearningSession(unit=unit, kind=kind, content=content, feedback=feedback, score=score)
+    evidence = LearningSession(unit=unit, kind=kind, content=content, feedback=feedback, score=score,
+                               assessment=evaluation)
     db.add(evidence)
 
 
@@ -98,6 +101,11 @@ def assessment(value: dict) -> tuple[int, bool, str]:
         raise HTTPException(502, "评估服务返回了不完整结果，请稍后重试；本次没有记录学习进度。")
 
 
+def assessment_evidence(value: dict, passed: bool) -> dict:
+    provenance = value.get("provenance") or {"source": "unknown"}
+    return {key: provenance.get(key) for key in ("source", "provider", "model", "requested_model", "rule_version")} | {"passed": passed}
+
+
 def validate_plan(plan: list[dict]):
     try:
         if not isinstance(plan, list) or not 3 <= len(plan) <= 6:
@@ -119,6 +127,9 @@ def validate_plan(plan: list[dict]):
                 raise ValueError("answer")
             if not all(isinstance(option, str) and option.strip() for option in options):
                 raise ValueError("option text")
+            if "practice_variants" in unit:
+                from .services.learning import PlanUnit
+                PlanUnit.model_validate({key: value for key, value in unit.items() if key != "question_source"})
     except (KeyError, TypeError, ValueError):
         raise HTTPException(502, "学习规划服务返回了不完整计划，请重试；本次没有创建目标。")
 
@@ -194,7 +205,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
         item = Goal(**body.model_dump())
         for position, material in enumerate(plan):
             item.units.append(Unit(title=material["title"], objective=material["objective"], position=position,
-                                   material={name: material[name] for name in ("lesson", "practice", "project", "teach")}))
+                                   material={name: material[name] for name in (
+                                       "lesson", "practice", "practice_variants", "question_source", "project", "teach"
+                                   ) if name in material}))
         db.add(item)
         save(db)
         return goal_data(item)
@@ -247,35 +260,36 @@ def create_app(database_url: str | None = None) -> FastAPI:
     def practice(unit_id: str, body: PracticeInput, db: DB):
         unit = get_unit(db, unit_id)
         require_stage(unit, "practice")
-        material = unit.material["practice"]
-        if not body.answer.isdecimal() or len(body.answer) > 2:
-            raise HTTPException(422, "请选择一个有效选项。")
-        chosen = int(body.answer)
-        if chosen >= len(material["options"]):
-            raise HTTPException(422, "请选择一个有效选项。")
-        passed = chosen == material["correct_index"]
-        score = 100 if passed else 0
-        explanation = material.get("explanation", "请回到讲解，对照例子重新思考。")
-        feedback = ("回答正确。把原理带入真实问题，开始实战。" if passed else "这次还没有掌握关键区别。先思考下面的解释，再重新作答。") + "\n\n" + explanation
-        if passed:
+        try:
+            result = grade_practice(unit, body.answer, body.question_id, body.token)
+        except StalePractice as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if result["complete"]:
             unit.stage = "project"
             unit.mastery = 35
-        else:
+        elif not result["passed"]:
             unit.mastery = min(unit.mastery, 10)
-        record(db, unit, "practice", body.answer, feedback, score)
+        record(db, unit, "practice", result["assessment"]["selected_answer"], result["feedback"],
+               result["score"], result["assessment"])
         save(db)
-        return {"unit": unit_data(unit, detailed=True), "feedback": feedback, "score": score, "passed": passed}
+        return {"unit": unit_data(unit, detailed=True), "feedback": result["feedback"], "score": result["score"],
+                "passed": result["passed"], "practice_complete": result["complete"], "assessment": result["assessment"]}
 
     async def submit(unit_id: str, body: SubmissionInput, db: Session, kind: str, next_stage: str, mastery: int):
         unit = get_unit(db, unit_id)
         require_stage(unit, kind)
-        score, passed, feedback = assessment(await evaluate_submission(kind, internal_unit(unit), body.content))
+        evaluation = await evaluate_submission(kind, internal_unit(unit), body.content)
+        score, passed, feedback = assessment(evaluation)
+        evidence = assessment_evidence(evaluation, passed)
         if passed:
             unit.stage = next_stage
             unit.mastery = mastery
-        record(db, unit, kind, body.content, feedback, score)
+        record(db, unit, kind, body.content, feedback, score, evidence)
         save(db)
-        return {"unit": unit_data(unit, detailed=True), "feedback": feedback, "score": score, "passed": passed}
+        return {"unit": unit_data(unit, detailed=True), "feedback": feedback, "score": score, "passed": passed,
+                "assessment": evidence}
 
     @application.post("/api/units/{unit_id}/project")
     async def project(unit_id: str, body: SubmissionInput, db: DB):
@@ -314,7 +328,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
         due = unit.review_due_at
         if due is None or (due.replace(tzinfo=timezone.utc) if due.tzinfo is None else due.astimezone(timezone.utc)) > now_utc():
             raise HTTPException(409, "还没有到复习时间。请让知识经过间隔，再独立回忆。")
-        score, recalled, feedback = assessment(await evaluate_submission("review", internal_unit(unit), body.answer))
+        evaluation = await evaluate_submission("review", internal_unit(unit), body.answer)
+        score, recalled, feedback = assessment(evaluation)
         passed = recalled and body.rating > 1
         unit.review_count += 1
         if passed:
@@ -333,14 +348,17 @@ def create_app(database_url: str | None = None) -> FastAPI:
         else:
             unit.review_streak = 0
             unit.stage = "practice"
+            restart_practice(unit)
             unit.mastery = min(score, 35)
             unit.completed_at = None
             unit.review_due_at = None
             feedback += "\n\n回忆证据或你的自评表明仍需巩固，已回到练习。用新的实践再建立理解。"
         content = f"自评：{body.rating}/4\n{body.answer}"
-        record(db, unit, "review", content, feedback, score)
+        evidence = {**assessment_evidence(evaluation, passed), "evaluation_passed": recalled, "self_rating": body.rating}
+        record(db, unit, "review", content, feedback, score, evidence)
         save(db)
-        return {"unit": unit_data(unit, detailed=True), "feedback": feedback, "score": score, "passed": passed}
+        return {"unit": unit_data(unit, detailed=True), "feedback": feedback, "score": score, "passed": passed,
+                "assessment": evidence}
 
     @application.get("/api/knowledge")
     def list_knowledge(db: DB):

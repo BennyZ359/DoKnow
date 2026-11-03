@@ -71,7 +71,8 @@ def _endpoint(base_url: str) -> str:
     return base_url.rstrip("/") + "/chat/completions"
 
 
-async def complete(messages: list[dict], *, schema: type[BaseModel] | None = None) -> str | dict:
+async def complete(messages: list[dict], *, schema: type[BaseModel] | None = None,
+                   metadata: dict | None = None) -> str | dict:
     config = configuration()
     if config["provider"] not in {"openai", "compatible"}:
         raise ProviderError("AI_PROVIDER 需设置为 demo、openai 或 compatible。")
@@ -106,9 +107,18 @@ async def complete(messages: list[dict], *, schema: type[BaseModel] | None = Non
         # JSON permits escaped surrogate code points; UTF-8 persistence and API
         # serialization do not. Fail before any learner evidence is recorded.
         content.encode("utf-8")
-        if schema:
-            return schema.model_validate_json(content).model_dump()
-        return content.strip()
+        result = schema.model_validate_json(content).model_dump() if schema else content.strip()
+        if metadata is not None:
+            reported_model = body.get("model")
+            if not isinstance(reported_model, str) or not reported_model.strip() or len(reported_model) > 200:
+                reported_model = None
+            elif "\x00" in reported_model:
+                reported_model = None
+            if reported_model is not None:
+                reported_model.encode("utf-8")
+            metadata.update(source="ai", provider=config["provider"], model=reported_model,
+                            requested_model=config["model"])
+        return result
     except ProviderError:
         raise
     except (httpx.HTTPError, TimeoutError) as exc:

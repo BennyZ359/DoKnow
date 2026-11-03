@@ -1,4 +1,24 @@
 export type Stage = 'learn' | 'practice' | 'project' | 'teach' | 'reflect' | 'review' | 'complete'
+export interface Provenance {
+  source: 'demo' | 'ai' | 'answer_key' | 'unknown'
+  provider?: string | null
+  model?: string | null
+  requested_model?: string | null
+  rule_version?: string | null
+}
+export interface Assessment extends Provenance {
+  passed?: boolean
+  evaluation_passed?: boolean
+  self_rating?: number
+  question_id?: string
+  question?: string
+  selected_answer?: string
+  correct_answer?: string
+  round?: number
+  attempt?: number
+  was_retry?: boolean
+  question_source?: Provenance
+}
 export interface Session {
   id: string
   unit_id: string
@@ -7,6 +27,7 @@ export interface Session {
   feedback: string
   score: number | null
   created_at: string
+  assessment: Assessment | null
 }
 export interface Unit {
   id: string
@@ -25,7 +46,19 @@ export interface FullUnit extends Unit {
   goal_id: string
   goal_title: string
   lesson: { explanation: string; example: string; question: string }
-  practice: { question: string; options: string[]; explanation?: string }
+  practice: {
+    question_id: string | null
+    token: string
+    question: string
+    options: string[]
+    total: number
+    correct: number
+    remaining: number
+    round: number
+    attempt: number
+    is_retry: boolean
+    legacy: boolean
+  }
   project: { title: string; brief: string; criteria: string[] }
   teach: { prompt: string; checklist: string[] }
   sessions: Session[]
@@ -67,6 +100,8 @@ export interface Submission {
   feedback: string
   score?: number
   passed?: boolean
+  practice_complete?: boolean
+  assessment?: Assessment | null
 }
 export interface KnowledgeAnswer {
   answer: string

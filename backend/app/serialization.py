@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from .models import Goal, KnowledgeEntry, LearningSession, Unit
+from .practice import public_practice
 
 STAGE_PROGRESS = {"learn": 0, "practice": 15, "project": 35, "teach": 55, "reflect": 75, "review": 90, "complete": 100}
 
@@ -18,7 +19,8 @@ def timestamp(value: datetime | None) -> str | None:
 
 def session_data(item: LearningSession) -> dict:
     return {"id": item.id, "unit_id": item.unit_id, "kind": item.kind, "content": item.content,
-            "feedback": item.feedback, "score": item.score, "created_at": timestamp(item.created_at)}
+            "feedback": item.feedback, "score": item.score, "created_at": timestamp(item.created_at),
+            "assessment": item.assessment or ({"source": "unknown"} if item.score is not None else None)}
 
 
 def unit_data(item: Unit, detailed: bool = False) -> dict:
@@ -28,11 +30,9 @@ def unit_data(item: Unit, detailed: bool = False) -> dict:
               "review_count": item.review_count, "completed_at": timestamp(item.completed_at)}
     if detailed:
         material = deepcopy(item.material)
-        practice = material.get("practice", {})
-        practice.pop("correct_index", None)
-        # Revealing an explanation before submission also reveals the answer.
-        practice.pop("explanation", None)
-        result.update({name: material.get(name, {}) for name in ("lesson", "practice", "project", "teach")})
+        # Only the active question is public. Never spread the private question bank.
+        result.update({name: material.get(name, {}) for name in ("lesson", "project", "teach")})
+        result["practice"] = public_practice(item)
         result["sessions"] = [session_data(session) for session in item.sessions]
     return result
 
