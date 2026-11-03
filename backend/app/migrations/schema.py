@@ -1,6 +1,6 @@
 """Frozen schemas: revisions must not import tomorrow's application models."""
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, MetaData, String, Table, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, MetaData, String, Table, Text, text
 
 
 def baseline_metadata() -> MetaData:
@@ -76,4 +76,14 @@ def learning_metadata() -> MetaData:
     metadata = current_metadata()
     metadata.tables["units"].append_column(Column("practice_state", JSON, nullable=True))
     metadata.tables["learning_sessions"].append_column(Column("assessment", JSON, nullable=True))
+    return metadata
+
+
+def editable_metadata() -> MetaData:
+    metadata = learning_metadata()
+    for name in ("goals", "knowledge_entries"):
+        metadata.tables[name].append_column(Column("version", Integer, nullable=False, server_default=text("1")))
+        metadata.tables[name].append_column(Column("updated_at", DateTime(timezone=True), nullable=True))
+    metadata.tables["knowledge_entries"].append_column(Column("tags", JSON, nullable=True))
+    metadata.tables["knowledge_entries"].append_column(Column("original", JSON, nullable=True))
     return metadata

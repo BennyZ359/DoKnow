@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -26,9 +26,12 @@ class Goal(Base):
     level: Mapped[str] = mapped_column(String(20), default="beginner")
     daily_minutes: Mapped[int] = mapped_column(Integer, default=30)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=now_utc)
     units: Mapped[list["Unit"]] = relationship(
         back_populates="goal", cascade="all, delete-orphan", order_by="Unit.position"
     )
+    __mapper_args__ = {"version_id_col": version}
 
 
 class Unit(Base):
@@ -79,3 +82,9 @@ class KnowledgeEntry(Base):
     source: Mapped[str] = mapped_column(String(255), default="note")
     unit_id: Mapped[str | None] = mapped_column(ForeignKey("units.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=now_utc)
+    tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=list)
+    # Captured once, before the first edit. Learning sessions remain immutable.
+    original: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    __mapper_args__ = {"version_id_col": version}

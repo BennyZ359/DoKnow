@@ -70,6 +70,8 @@ export interface Goal {
   level: string
   daily_minutes: number
   created_at: string
+  updated_at: string
+  version: number
   units: Unit[]
   progress: number
 }
@@ -86,6 +88,12 @@ export interface Note {
   content: string
   source: string
   created_at: string
+  updated_at: string
+  version: number
+  tags: string[]
+}
+export interface FullNote extends Note {
+  original: { title: string; content: string }
 }
 export interface Settings {
   mode: string

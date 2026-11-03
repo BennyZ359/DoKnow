@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 from datetime import timedelta, timezone
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -17,12 +17,13 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from .database import make_database
+from .editing import EditConflict, export_note, filter_notes, require_version
 from .migrations import initialize_database
 from .cache import AnswerCache, answer_key
 from .idempotency import DEFER_COMMIT, IdempotentRoute, erase_receipts
 from .models import Goal, KnowledgeEntry, LearningSession, Unit, now_utc
 from .practice import StalePractice, grade_practice, restart_practice
-from .schemas import ChatInput, GoalInput, KnowledgeInput, LearnInput, PracticeInput, QuestionInput, ReflectionInput, ReviewInput, SubmissionInput
+from .schemas import ChatInput, GoalInput, GoalUpdate, KnowledgeInput, KnowledgeUpdate, LearnInput, PracticeInput, QuestionInput, ReflectionInput, ReviewInput, SubmissionInput
 from .serialization import goal_data, knowledge_data, session_data, unit_data
 from .services.knowledge import answer_question, extract_document
 from .services.learning import evaluate_submission, generate_plan, provider_status, tutor_reply
@@ -74,7 +75,7 @@ def record(db: Session, unit: Unit, kind: str, content: str, feedback: str, scor
     db.add(evidence)
 
 
-def save(db: Session):
+def save(db: Session, *, editing: bool = False):
     try:
         if db.info.get(DEFER_COMMIT):
             db.flush()
@@ -82,6 +83,8 @@ def save(db: Session):
             db.commit()
     except StaleDataError:
         db.rollback()
+        if editing:
+            raise EditConflict
         raise HTTPException(409, "这个学习单元刚刚更新，请刷新后继续，避免重复提交。")
 
 
@@ -158,13 +161,20 @@ def create_app(database_url: str | None = None) -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()],
-        allow_methods=["GET", "POST", "DELETE"], allow_headers=["Content-Type", "Idempotency-Key"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Content-Type", "Idempotency-Key"],
         expose_headers=["Idempotency-Replayed", "Retry-After"],
     )
 
     @application.exception_handler(ProviderError)
     async def provider_failure(_: Request, error: ProviderError):
         return JSONResponse(status_code=502, content={"detail": str(error)})
+
+    @application.exception_handler(EditConflict)
+    async def edit_conflict(_: Request, error: EditConflict):
+        return JSONResponse(status_code=409, content={
+            "detail": "这条记录已在其他页面更新。你的修改尚未保存，请核对最新内容后再保存。",
+            "code": "edit_conflict",
+        })
 
     @application.exception_handler(RequestValidationError)
     async def validation_failure(_: Request, error: RequestValidationError):
@@ -217,6 +227,19 @@ def create_app(database_url: str | None = None) -> FastAPI:
         item = db.scalar(select(Goal).where(Goal.id == goal_id).options(selectinload(Goal.units)))
         if item is None:
             raise HTTPException(404, "没有找到这个学习目标。")
+        return goal_data(item)
+
+    @application.patch("/api/goals/{goal_id}")
+    def update_goal(goal_id: str, body: GoalUpdate, db: DB):
+        item = db.scalar(select(Goal).where(Goal.id == goal_id).options(selectinload(Goal.units)))
+        if item is None:
+            raise HTTPException(404, "没有找到这个学习目标。")
+        require_version(item, body.version)
+        for name, value in body.model_dump(exclude_unset=True, exclude={"version"}).items():
+            setattr(item, name, value)
+        item.version += 1
+        item.updated_at = now_utc()
+        save(db, editing=True)
         return goal_data(item)
 
     @application.delete("/api/goals/{goal_id}", status_code=204)
@@ -361,9 +384,48 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 "assessment": evidence}
 
     @application.get("/api/knowledge")
-    def list_knowledge(db: DB):
+    def list_knowledge(db: DB, q: Annotated[str, Query(max_length=4000)] = "",
+                       tag: Annotated[str, Query(max_length=40)] = "",
+                       source: Literal["", "note", "reflection", "import"] = ""):
         items = db.scalars(select(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc())).all()
-        return [knowledge_data(item) for item in items]
+        return [knowledge_data(item) for item in filter_notes(items, q, tag, source)]
+
+    @application.get("/api/knowledge/export")
+    def export_knowledge(db: DB, q: Annotated[str, Query(max_length=4000)] = "",
+                         tag: Annotated[str, Query(max_length=40)] = "",
+                         source: Literal["", "note", "reflection", "import"] = ""):
+        items = db.scalars(select(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc())).all()
+        content = "\n---\n\n".join(export_note(item) for item in filter_notes(items, q, tag, source))
+        return Response(content or "# 知识笔记\n\n没有符合筛选条件的笔记。\n", media_type="text/markdown",
+                        headers={"Content-Disposition": 'attachment; filename="doknow-knowledge.md"'})
+
+    def get_note(db: Session, entry_id: str) -> KnowledgeEntry:
+        item = db.get(KnowledgeEntry, entry_id)
+        if item is None:
+            raise HTTPException(404, "没有找到这条知识记录。")
+        return item
+
+    @application.get("/api/knowledge/{entry_id}")
+    def fetch_knowledge(entry_id: str, db: DB):
+        return knowledge_data(get_note(db, entry_id), detailed=True)
+
+    @application.get("/api/knowledge/{entry_id}/export")
+    def export_one_note(entry_id: str, db: DB):
+        return Response(export_note(get_note(db, entry_id)), media_type="text/markdown",
+                        headers={"Content-Disposition": 'attachment; filename="doknow-note.md"'})
+
+    @application.patch("/api/knowledge/{entry_id}")
+    def update_knowledge(entry_id: str, body: KnowledgeUpdate, db: DB):
+        item = get_note(db, entry_id)
+        require_version(item, body.version)
+        if item.original is None:
+            item.original = {"title": item.title, "content": item.content}
+        for name, value in body.model_dump(exclude_unset=True, exclude={"version"}).items():
+            setattr(item, name, value)
+        item.version += 1
+        item.updated_at = now_utc()
+        save(db, editing=True)
+        return knowledge_data(item, detailed=True)
 
     @application.post("/api/knowledge", status_code=201)
     def create_knowledge(body: KnowledgeInput, db: DB):
@@ -403,12 +465,20 @@ def create_app(database_url: str | None = None) -> FastAPI:
     async def ask_knowledge(body: QuestionInput, db: DB):
         items = db.scalars(select(KnowledgeEntry).order_by(KnowledgeEntry.created_at.desc())).all()
         documents = [knowledge_data(item) for item in items]
-        key = answer_key(body.question, documents, provider_status())
+        provider = provider_status()
+        key = answer_key(body.question, documents, provider)
         cached = await answer_cache.get(key)
-        if cached is not None:
-            return cached
-        result = await answer_question(body.question, documents)
-        await answer_cache.put(key, result)
+        result = cached if cached is not None else await answer_question(body.question, documents)
+        # A different page may edit while a model/cache request is in flight.
+        # Read in a new transaction; never publish an answer to superseded notes.
+        with session_factory() as fresh:
+            current = [knowledge_data(item) for item in fresh.scalars(select(KnowledgeEntry)).all()]
+        if key != answer_key(body.question, current, provider):
+            return JSONResponse(status_code=409, content={
+                "detail": "资料在回答期间已更新，请根据最新笔记重新提问。", "code": "knowledge_changed",
+            })
+        if cached is None:
+            await answer_cache.put(key, result)
         return result
 
     @application.delete("/api/knowledge/{entry_id}", status_code=204)

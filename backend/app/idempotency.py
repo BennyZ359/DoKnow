@@ -179,18 +179,20 @@ def response_scope(request: Request, db: Session, response: Response) -> str:
         unit = db.get(Unit, unit_id)
         return f"goal:{unit.goal_id}"
     result = json.loads(response.body)
-    kind = "goal" if request.url.path == "/api/goals" else "knowledge"
+    kind = "goal" if request.url.path == "/api/goals" or "goal_id" in request.path_params else "knowledge"
     return f"{kind}:{result['id']}"
 
 
 class IdempotentRoute(APIRoute):
     def get_route_handler(self):
         original = super().get_route_handler()
-        protected = self.path in {"/api/goals", "/api/knowledge", "/api/knowledge/import"} or self.path.startswith("/api/units/")
+        protected = (self.path in {"/api/goals", "/api/knowledge", "/api/knowledge/import",
+                                   "/api/goals/{goal_id}", "/api/knowledge/{entry_id}"}
+                     or self.path.startswith("/api/units/"))
 
         async def handler(request: Request) -> Response:
             keys = request.headers.getlist("Idempotency-Key")
-            if not protected or request.method != "POST" or not keys:
+            if not protected or request.method not in {"POST", "PATCH"} or not keys:
                 return await original(request)
             if len(keys) != 1 or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", keys[0]):
                 return ReceiptError(422, "idempotency_invalid_key", "提交标识格式无效，请重新发起操作。").response()

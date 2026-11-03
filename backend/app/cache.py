@@ -17,12 +17,13 @@ def answer_key(question: str, documents: list[dict], provider: dict) -> str:
     payload = {
         "question": question.strip(),
         "documents": sorted(
-            [{"id": doc["id"], "title": doc["title"], "content": doc["content"]} for doc in documents],
+            [{"id": doc["id"], "title": doc["title"], "content": doc["content"],
+              "version": doc.get("version", 1)} for doc in documents],
             key=lambda item: str(item["id"]),
         ),
         "provider": provider,
         "endpoint": os.getenv("AI_BASE_URL", "https://api.openai.com/v1"),
-        "schema": 1,
+        "schema": 2,
     }
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return "doknow:answer:" + hashlib.sha256(serialized).hexdigest()

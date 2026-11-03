@@ -8,6 +8,8 @@ export interface PendingWrite {
   path: string
   fingerprint: string
   label: string
+  method?: 'POST' | 'PATCH'
+  draft?: Record<string, unknown>
   payload?: Record<string, unknown>
   filename?: string
 }
@@ -20,9 +22,11 @@ function valid(value: unknown): value is PendingWrite {
     /^[A-Za-z0-9._:-]{8,128}$/.test(entry.key) &&
     typeof entry.scope === 'string' &&
     typeof entry.path === 'string' &&
-    /^\/(goals|knowledge(?:\/import)?|units\/[a-zA-Z0-9-]+\/(learn|practice|project|teach|reflect|review|chat))$/.test(
+    /^\/(goals(?:\/[a-zA-Z0-9-]+)?|knowledge(?:\/[a-zA-Z0-9-]+)?|units\/[a-zA-Z0-9-]+\/(learn|practice|project|teach|reflect|review|chat))$/.test(
       entry.path
     ) &&
+    (entry.method === undefined || entry.method === 'POST' || entry.method === 'PATCH') &&
+    (entry.method !== 'PATCH' || /^\/(goals|knowledge)\/[a-zA-Z0-9-]+$/.test(entry.path)) &&
     typeof entry.label === 'string' &&
     typeof entry.fingerprint === 'string' &&
     (entry.payload === undefined ||
@@ -64,7 +68,9 @@ export async function sendWrite<T>(
   payload: Record<string, unknown> | File,
   scope: string,
   label: string,
-  existing?: PendingWrite
+  existing?: PendingWrite,
+  method: 'POST' | 'PATCH' = existing?.method || 'POST',
+  draft?: Record<string, unknown>
 ): Promise<{ result: T; entry: PendingWrite }> {
   const isFile = payload instanceof File
   // Snapshot reactive forms before the first await; typing or navigation cannot
@@ -73,7 +79,12 @@ export async function sendWrite<T>(
   const fingerprint = isFile
     ? await digest(payload.name + ':' + (await digest(await payload.arrayBuffer())))
     : await digest(JSON.stringify(snapshot))
-  if (existing && (existing.path !== path || existing.fingerprint !== fingerprint)) {
+  if (
+    existing &&
+    (existing.path !== path ||
+      existing.fingerprint !== fingerprint ||
+      (existing.method || 'POST') !== method)
+  ) {
     throw new ApiError(
       '这份恢复记录已损坏，无法安全确认。请先同步并核对已保存的记录；原文仍然保留。'
     )
@@ -81,7 +92,11 @@ export async function sendWrite<T>(
   const previous =
     existing ||
     pendingWrites.value.find(
-      (item) => item.scope === scope && item.path === path && item.fingerprint === fingerprint
+      (item) =>
+        item.scope === scope &&
+        item.path === path &&
+        item.fingerprint === fingerprint &&
+        (item.method || 'POST') === method
     )
   const entry: PendingWrite =
     previous?.path === path && previous.fingerprint === fingerprint
@@ -91,6 +106,8 @@ export async function sendWrite<T>(
           path,
           scope,
           label,
+          method,
+          ...(draft ? { draft: JSON.parse(JSON.stringify(draft)) } : {}),
           fingerprint,
           ...(isFile ? { filename: payload.name } : { payload: snapshot }),
         }
@@ -99,7 +116,7 @@ export async function sendWrite<T>(
   if (body instanceof FormData) body.append('file', payload as File)
   try {
     const result = await api<T>(path, {
-      method: 'POST',
+      method,
       headers: { 'Idempotency-Key': entry.key },
       body,
     })

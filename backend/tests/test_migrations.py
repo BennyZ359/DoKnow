@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import inspect, select, text
 
 from app.database import make_database
-from app.migrations import CURRENT, MigrationError, initialize_database
+from app.migrations import CURRENT, MigrationError, configuration, initialize_database
 from app.migrations.schema import baseline_metadata
 from app.models import KnowledgeEntry, LearningSession, Unit
 
@@ -201,3 +201,53 @@ def test_receipt_revision_upgrade_preserves_every_existing_value(legacy, monkeyp
         assert connection.exec_driver_sql("SELECT * FROM request_receipts").all() == receipt
         revision = connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
         assert revision == ("0002_request_receipts" if fail else CURRENT)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_learning_revision_upgrade_preserves_evidence_and_receipts(legacy, monkeypatch, fail):
+    _, engine, sessions, unit_id = legacy
+    from app import migrations
+    # Build the actual prior revision, then capture every column as raw SQL values.
+    with engine.begin() as connection:
+        config = configuration()
+        config.attributes["connection"] = connection
+        migrations.command.stamp(config, "0001_baseline")
+        migrations.command.upgrade(config, "0003_learning_evidence")
+        connection.execute(text("UPDATE units SET practice_state=:value"), {"value": '{"round":2,"attempt":4,"completed":["q1"]}'})
+        connection.execute(text("UPDATE learning_sessions SET assessment=:value"), {"value": '{"source":"demo","passed":true,"rule_version":"previous"}'})
+        connection.exec_driver_sql("""INSERT INTO request_receipts VALUES (
+            'prior-request', 'fingerprint', 'owner', 'complete', '2026-11-01 00:00:00',
+            200, '{"feedback":"original receipt"}', '2026-11-01 00:00:00',
+            '2026-11-01 00:00:00', 'goal:existing')""")
+    names = (*LEGACY_TABLES, "request_receipts")
+    columns = {name: ', '.join(f'"{column["name"]}"' for column in inspect(engine).get_columns(name)) for name in names}
+
+    def snapshot():
+        with engine.connect() as connection:
+            return {name: connection.exec_driver_sql(f'SELECT {columns[name]} FROM "{name}"').all() for name in names}
+
+    before = snapshot()
+    if fail:
+        upgrade = migrations.command.upgrade
+
+        def fail_after_upgrade(*args, **kwargs):
+            upgrade(*args, **kwargs)
+            raise RuntimeError("failed after editable columns")
+
+        monkeypatch.setattr(migrations.command, "upgrade", fail_after_upgrade)
+        with pytest.raises(RuntimeError, match="editable columns"):
+            initialize_database(engine)
+        assert "version" not in {column["name"] for column in inspect(engine).get_columns("goals")}
+        assert "original" not in {column["name"] for column in inspect(engine).get_columns("knowledge_entries")}
+    else:
+        assert initialize_database(engine) == CURRENT
+        assert initialize_database(engine) == CURRENT
+        with sessions() as db:
+            item = db.scalar(select(KnowledgeEntry))
+            assert item.version == 1 and item.tags is None and item.original is None
+            assert item.updated_at == item.created_at
+            goal = db.get(Unit, unit_id).goal
+            assert goal.version == 1 and goal.updated_at == goal.created_at
+    assert snapshot() == before
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ("0003_learning_evidence" if fail else CURRENT)

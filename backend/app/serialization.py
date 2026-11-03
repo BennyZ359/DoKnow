@@ -42,9 +42,15 @@ def goal_data(item: Goal) -> dict:
     progress = round(sum(STAGE_PROGRESS.get(unit.stage, 0) for unit in item.units) / len(units)) if units else 0
     return {"id": item.id, "title": item.title, "motivation": item.motivation, "level": item.level,
             "daily_minutes": item.daily_minutes, "created_at": timestamp(item.created_at),
+            "version": item.version, "updated_at": timestamp(item.updated_at or item.created_at),
             "units": units, "progress": progress}
 
 
-def knowledge_data(item: KnowledgeEntry) -> dict:
-    return {"id": item.id, "title": item.title, "content": item.content,
-            "source": item.source, "created_at": timestamp(item.created_at)}
+def knowledge_data(item: KnowledgeEntry, detailed: bool = False) -> dict:
+    result = {"id": item.id, "title": item.title, "content": item.content,
+              "source": item.source, "created_at": timestamp(item.created_at),
+              "tags": item.tags or [], "version": item.version,
+              "updated_at": timestamp(item.updated_at or item.created_at)}
+    if detailed:
+        result["original"] = item.original or {"title": item.title, "content": item.content}
+    return result

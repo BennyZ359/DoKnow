@@ -9,7 +9,8 @@ Resource identifiers are UUID strings. Question identifiers and practice tokens 
 - `GET /health` -> `{status, mode, database}`.
 - `GET /dashboard` -> `{goals, reviews_due, total_sessions, knowledge_count, recent_activity}`. `goals` contains the goal objects below.
 - `GET /goals` -> array of goals. `POST /goals` body `{title, motivation, level: beginner|intermediate|advanced, daily_minutes: 10..180}` -> goal including generated units. `GET /goals/{id}` -> goal. `DELETE /goals/{id}` -> 204.
-- Goal: `{id,title,motivation,level,daily_minutes,created_at,units:[{id,title,objective,position,stage,mastery,review_due_at,review_count,completed_at}],progress}`. Stages `learn`, `practice`, `project`, `teach`, `reflect`, `review`, `complete`. `progress` 0..100.
+- Goal: `{id,title,motivation,level,daily_minutes,created_at,updated_at,version,units:[{id,title,objective,position,stage,mastery,review_due_at,review_count,completed_at}],progress}`. Stages `learn`, `practice`, `project`, `teach`, `reflect`, `review`, `complete`. `progress` 0..100.
+- `PATCH /goals/{id}` body `{version,title?,motivation?,daily_minutes?}` -> updated goal. A positive integer `version` from the last GET and at least one editable field are required. Title is 2..200 trimmed characters, motivation 0..4,000, and daily_minutes an integer 10..180. Unknown fields (including level and units) and explicit nulls are rejected with 422. This changes only basic goal information: no plan generation or model evaluation; course content, level, ordering, progress, sessions, assessments and review dates are preserved. The name is reflected in current goal/unit headers and future tutor context. Daily time is a planning reference, not a course or review rescheduler.
 - `GET /units/{id}` -> unit with `goal_id,goal_title,lesson:{explanation,example,question},practice,project:{title,brief,criteria},teach:{prompt,checklist},sessions:[]`. Practice contains only the active question and progress (see below). Private answer keys, future questions and their explanations MUST NOT be returned; submission feedback explains the answered question.
 - `POST /units/{id}/chat` `{message}` -> `{reply,mode}`; messages persisted as sessions (kind chat, content user message, feedback reply).
 - `POST /units/{id}/learn` `{reflection}` -> `{unit,feedback}`. At least 20 non-whitespace characters. Advances learn to practice only.
@@ -32,11 +33,14 @@ Choice assessments additionally store `question_id`, `question`, displayed `opti
 
 ## Knowledge endpoints
 
-- `GET /knowledge` -> array `{id,title,content,source,created_at}`.
-- `POST /knowledge` JSON `{title,content}` -> entry, source `note`, content 10..1,000,000 characters.
+- `GET /knowledge` -> array `{id,title,content,source,created_at,updated_at,version,tags}`. Optional `q` (up to 4,000 characters) searches title, current body and tags; `tag` (up to 40 characters) matches a whole tag; `source` is `note|reflection|import`. Filters combine with AND, text/tag matching ignores case and surrounding whitespace. No filters returns all entries in creation order, newest first.
+- `GET /knowledge/{id}` -> entry plus `original:{title,content}`. Before the first edit, original is the current record; on the first edit it is captured in the same transaction and remains unchanged thereafter. For migrated notes this is the retained pre-edit content, not an invented reconstruction of earlier history. Learning sessions and assessment evidence are never edited by this endpoint. Independent notes and their original snapshots survive goal deletion.
+- `POST /knowledge` JSON `{title,content,tags?}` -> entry, source `note`, content 10..1,000,000 characters with at least 10 non-whitespace characters. Tags default to `[]`; max 20 strings of 1..40 trimmed characters. Duplicates ignoring case are collapsed (first spelling retained); invalid Unicode, NUL, control characters and empty tags are rejected.
+- `PATCH /knowledge/{id}` JSON `{version,title?,content?,tags?}` -> detailed entry. Requires a positive integer version and at least one editable field; explicit nulls and unknown fields are rejected. `tags: []` removes all tags. Source, creation date, original snapshot and linked learning evidence are not editable. Every successful PATCH, including an unchanged payload, increments the version and updates the timestamp.
+- `GET /knowledge/{id}/export` -> UTF-8 `text/markdown` attachment `doknow-note.md`. `GET /knowledge/export` accepts the same filters as the list and returns `doknow-knowledge.md`, including a readable empty result. Exports include current Markdown body, tags, source, timestamps and version; changed title/body also includes the retained original. Metadata is escaped as literal Markdown; body Markdown is preserved. Export reads only note fields and never includes application configuration, credentials or receipt internals.
 - `POST /knowledge/import` multipart `file` -> entry; .md/.txt/.pdf/.docx, max 10 MB, extracted text max200k characters, PDF max200pages, DOCX expansion max25MB, no file paths exposed.
 - `DELETE /knowledge/{id}` -> 204.
-- `POST /knowledge/ask` `{question}` -> `{answer,sources:[{id,title,excerpt}],mode}`. Retrieval scoped to this local learner. No sources means explicitly insufficient materials.
+- `POST /knowledge/ask` `{question}` -> `{answer,sources:[{id,title,excerpt}],mode}`. Retrieval uses all current local notes, independent of list filters, and never the retained original snapshots. No sources means explicitly insufficient materials. Cache keys include current title, body, revision and provider; saved edits and deletions make old cached answers unreachable. A change during an in-flight model/cache read returns 409 `{code:"knowledge_changed",detail}` so the client can ask again against current materials. Old cache entries expire after 10 minutes; Redis is optional.
 - `GET /settings` -> `{mode,provider,model,configured,principles:[{name,practice}],limitations:[]}`. Never return API keys.
 
 ## Provider module contract (pure service layer)
@@ -55,7 +59,9 @@ Provider reads environment via `os.getenv`; backend settings env: `DATABASE_URL`
 
 ## Safe write retries
 
-The client may send `Idempotency-Key` on `POST /goals`, every `POST /units/{id}/...`, `POST /knowledge`, and `POST /knowledge/import`. Use a random UUID for each deliberate user action (accepted syntax: 8–128 ASCII letters, digits, `.`, `_`, `:`, or `-`). Keep the same key when retrying that action after a lost response; a changed payload or a deliberate new attempt uses a new key. Clients without the header keep the original API behavior. `POST /knowledge/ask` and DELETE requests are outside this receipt mechanism.
+The client may send `Idempotency-Key` on `POST /goals`, every `POST /units/{id}/...`, `POST /knowledge`, `POST /knowledge/import`, `PATCH /goals/{id}`, and `PATCH /knowledge/{id}`. Use a random UUID for each deliberate user action (accepted syntax: 8–128 ASCII letters, digits, `.`, `_`, `:`, or `-`). Keep the same key, method, version and payload when retrying after a lost response; changed content or an explicitly reconciled new version uses a new key. Clients without the header still have mandatory version protection on PATCH. `POST /knowledge/ask` and DELETE requests are outside this receipt mechanism.
+
+Edits use optimistic concurrency at both the displayed version check and the database UPDATE. A stale version or competing committed update returns 409 `{code:"edit_conflict",detail}` without modifying the record. Fetch the latest record, retain local input, compare/merge, and only then submit its new version. The UI does not automatically replace the version after a conflict. Edit drafts retain their base version across reloads; failed synchronization or replay of an earlier save cannot clear newer unsaved text. Goal versions cover basic information only, so learning activity can continue without invalidating an unrelated metadata edit.
 
 A successful HTTP response, including a failed assessment returned as HTTP 200, is stored with the business data in one transaction. Replaying the same method, path, and payload returns that original status and JSON body with `Idempotency-Replayed: true`; the first successful response has `false`. Replaying never duplicates a committed goal, note, session, review count, or model evaluation. Receipts survive application restarts and are included in database backups. There is no time-based receipt expiry in this version; resource deletion erases associated response bodies as described below.
 
@@ -76,7 +82,7 @@ A receipt is a historical response, so the client should apply the confirmed suc
 
 External model execution and database commits cannot be one transaction: if a process dies after the model responds but before the database commits, recovery may call the model again. The guarantees concern committed learning data and completed response replays, not exactly-once model billing.
 
-Cross-origin local clients can send `Idempotency-Key`; CORS exposes `Idempotency-Replayed` and `Retry-After`.
+Cross-origin local clients can send `Idempotency-Key` with POST or PATCH; CORS exposes `Idempotency-Replayed` and `Retry-After`.
 
 ## Ownership
 

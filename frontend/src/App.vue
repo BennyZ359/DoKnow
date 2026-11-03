@@ -2,6 +2,10 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import Icon from './components/Icon.vue'
 import AssessmentDetails from './components/AssessmentDetails.vue'
+import KnowledgeLibrary from './components/KnowledgeLibrary.vue'
+import RecordEditor from './components/RecordEditor.vue'
+import { clearEditDraft, forgetRecordEdits } from './editing'
+import type { EditTarget, EditableRecord } from './editing'
 import { api, ApiError, post } from './api'
 import { storageWarning, useDrafts } from './persistence'
 import { acknowledgeWrite, forgetUnitWrites, pendingWrites, sendWrite } from './writes'
@@ -58,6 +62,7 @@ const feedback = ref<Submission | null>(null)
 const goalDialog = ref<HTMLDialogElement | null>(null)
 const goalTitleInput = ref<HTMLInputElement | null>(null)
 const goalForm = reactive({ title: '', motivation: '', level: 'beginner', daily_minutes: 30 })
+const editTarget = ref<EditTarget | null>(null)
 const learnReflection = ref('')
 const practiceAnswer = ref('')
 const historyFilter = ref('all')
@@ -79,7 +84,6 @@ const chatMessage = ref('')
 const chatReply = ref('')
 const knowledgeQuery = ref('')
 const knowledgeAnswer = ref<KnowledgeAnswer | null>(null)
-const noteSearch = ref('')
 const noteForm = reactive({ title: '', content: '' })
 const showNoteForm = ref(false)
 const selectedNote = ref<string | null>(null)
@@ -164,11 +168,6 @@ const nextStudyUnit = computed(() =>
 const completedUnits = computed(
   () => goals.value.flatMap((g) => g.units).filter((u) => u.stage === 'complete').length
 )
-const filteredNotes = computed(() =>
-  notes.value.filter((n) =>
-    `${n.title} ${n.content}`.toLocaleLowerCase().includes(noteSearch.value.toLocaleLowerCase())
-  )
-)
 const stagePosition = computed(() =>
   unit.value?.stage === 'complete' ? 6 : stages.findIndex((s) => s.key === unit.value?.stage)
 )
@@ -205,6 +204,23 @@ let lastDueCount = 0
 let syncTask: Promise<void> | null = null
 let syncAgain = false
 let savedSyncQueued = false
+let knowledgeEpoch = 0
+
+function acceptNotes(value: Note[]) {
+  const signature = (items: Note[]) =>
+    items
+      .map((item) => `${item.id}:${item.version}`)
+      .sort()
+      .join('|')
+  if (signature(notes.value) !== signature(value)) invalidateAnswer()
+  notes.value = value
+}
+
+function invalidateAnswer() {
+  knowledgeEpoch++
+  if (knowledgeAnswer.value) notice.value = '资料已更新，请根据最新笔记重新提问。'
+  knowledgeAnswer.value = null
+}
 
 const length = (text: string) => text.replace(/\s/g, '').length
 const stageLabel = (stage: string) =>
@@ -303,7 +319,7 @@ async function syncOnce(saved: boolean) {
   if (currentView === 'knowledge')
     requests.push(
       api<Note[]>('/knowledge').then((value) => {
-        if (sequence === routeSequence && epoch === dataEpoch) notes.value = value
+        if (sequence === routeSequence && epoch === dataEpoch) acceptNotes(value)
       })
     )
   const results = await Promise.allSettled(requests)
@@ -382,7 +398,7 @@ async function readRoute() {
     }
     if (view.value === 'knowledge') {
       const result = await api<Note[]>('/knowledge')
-      if (sequence === routeSequence && epoch === dataEpoch) notes.value = result
+      if (sequence === routeSequence && epoch === dataEpoch) acceptNotes(result)
     }
     if (!settings.value || view.value === 'settings') {
       const result = await api<Settings>('/settings')
@@ -445,7 +461,8 @@ async function createGoal() {
     drafts.clearSubmitted(entry.scope, entry.payload)
     acknowledgeWrite(entry)
     dataEpoch++
-    dashboard.value.goals = [goal, ...dashboard.value.goals.filter((item) => item.id !== goal.id)]
+    if (!dashboard.value.goals.some((item) => item.id === goal.id))
+      dashboard.value.goals = [goal, ...dashboard.value.goals]
     goalDialog.value?.close()
     if (sequence === routeSequence) navigate('learn', goal.units[0]?.id)
   })
@@ -470,10 +487,60 @@ function applyNote(result: Note, entry: PendingWrite, sequence: number) {
   if (entry.payload) drafts.clearSubmitted(entry.scope, entry.payload)
   acknowledgeWrite(entry)
   if (sequence !== routeSequence) return
-  notes.value = [result, ...notes.value.filter((item) => item.id !== result.id)]
+  result = {
+    ...result,
+    tags: result.tags || [],
+    version: result.version || 1,
+    updated_at: result.updated_at || result.created_at,
+  }
+  const current = notes.value.find((item) => item.id === result.id)
+  if (!current || (current.version || 1) <= (result.version || 1))
+    notes.value = [result, ...notes.value.filter((item) => item.id !== result.id)]
+  invalidateAnswer()
   selectedNote.value = result.id
   if (entry.scope === 'note' && !noteForm.title && !noteForm.content) showNoteForm.value = false
   notice.value = entry.filename ? `「${result.title}」已导入。` : '笔记已存入知识库。'
+}
+
+function editorSaving(value: boolean) {
+  if (value) {
+    busy.value = 'edit'
+    dataEpoch++
+  } else if (busy.value === 'edit') busy.value = ''
+}
+
+function applyEdit(result: EditableRecord, entry: PendingWrite) {
+  dataEpoch++
+  clearEditDraft(entry)
+  acknowledgeWrite(entry)
+  if ('daily_minutes' in result) {
+    const current = dashboard.value.goals.find((goal) => goal.id === result.id)
+    if (current && current.version <= result.version) {
+      Object.assign(current, {
+        title: result.title,
+        motivation: result.motivation,
+        daily_minutes: result.daily_minutes,
+        version: result.version,
+        updated_at: result.updated_at,
+      })
+      if (unit.value?.goal_id === result.id) unit.value.goal_title = result.title
+    }
+    notice.value = '目标信息已保存，课程、进度和历史记录保持原样。'
+  } else {
+    const current = notes.value.find((note) => note.id === result.id)
+    if (!current || current.version <= result.version)
+      notes.value = notes.value.some((note) => note.id === result.id)
+        ? notes.value.map((note) => (note.id === result.id ? result : note))
+        : [result, ...notes.value]
+    invalidateAnswer()
+    selectedNote.value = result.id
+    notice.value = '笔记修改已保存，原始记录已保留。资料问答将使用最新内容。'
+  }
+}
+
+function editorSaved(result: EditableRecord, entry: PendingWrite) {
+  applyEdit(result, entry)
+  void syncCurrent(true)
 }
 
 async function confirmWrite(entry: PendingWrite) {
@@ -491,12 +558,15 @@ async function confirmWrite(entry: PendingWrite) {
       entry.label,
       entry
     )
-    if (entry.path === '/goals') {
+    if (entry.method === 'PATCH') {
+      applyEdit(result as EditableRecord, entry)
+    } else if (entry.path === '/goals') {
       const goal = result as Goal
       drafts.clearSubmitted(entry.scope, entry.payload)
       acknowledgeWrite(entry)
       dataEpoch++
-      dashboard.value.goals = [goal, ...dashboard.value.goals.filter((item) => item.id !== goal.id)]
+      if (!dashboard.value.goals.some((item) => item.id === goal.id))
+        dashboard.value.goals = [goal, ...dashboard.value.goals]
       goalDialog.value?.close()
       if (sequence === routeSequence) navigate('learn', goal.units[0]?.id)
     } else if (entry.path === '/knowledge') {
@@ -569,6 +639,7 @@ async function deleteGoal(goal: Goal) {
     const ids = goal.units.map((item) => item.id)
     drafts.removeUnits(ids)
     forgetUnitWrites(ids)
+    forgetRecordEdits({ kind: 'goals', id: goal.id })
     dataEpoch++
     dashboard.value.goals = dashboard.value.goals.filter((item) => item.id !== goal.id)
     if (sequence === routeSequence) notice.value = '学习目标已删除。'
@@ -613,10 +684,11 @@ async function deleteNote(note: Note) {
   const sequence = routeSequence
   await run('delete-note', async () => {
     await api(`/knowledge/${note.id}`, { method: 'DELETE' })
+    forgetRecordEdits({ kind: 'knowledge', id: note.id })
     dataEpoch++
     if (sequence === routeSequence) {
       notes.value = notes.value.filter((n) => n.id !== note.id)
-      knowledgeAnswer.value = null
+      invalidateAnswer()
       notice.value = '笔记已删除。'
     }
     await syncCurrent(true)
@@ -626,9 +698,11 @@ async function deleteNote(note: Note) {
 async function askKnowledge() {
   const sequence = routeSequence
   const question = knowledgeQuery.value
+  const epoch = knowledgeEpoch
+  knowledgeAnswer.value = null
   await run('ask', async () => {
     const result = await post<KnowledgeAnswer>('/knowledge/ask', { question })
-    if (sequence === routeSequence && question === knowledgeQuery.value)
+    if (sequence === routeSequence && question === knowledgeQuery.value && epoch === knowledgeEpoch)
       knowledgeAnswer.value = result
   })
 }
@@ -862,8 +936,16 @@ onUnmounted(() => {
               <article v-for="(goal, i) in goals" :key="goal.id" class="goal-card">
                 <div class="goal-card-top">
                   <span class="goal-number">{{ String(i + 1).padStart(2, '0') }}</span
-                  ><span class="pill">{{ levelLabel(goal.level) }}</span
-                  ><button
+                  ><span class="pill">{{ levelLabel(goal.level) }}</span>
+                  <button
+                    class="text-button goal-edit"
+                    :aria-label="`编辑目标 ${goal.title}`"
+                    :disabled="!!busy"
+                    @click="editTarget = { kind: 'goals', id: goal.id }"
+                  >
+                    编辑
+                  </button>
+                  <button
                     class="icon-button muted"
                     :aria-label="`删除目标 ${goal.title}`"
                     :disabled="!!busy"
@@ -974,6 +1056,14 @@ onUnmounted(() => {
                   {{ goal.title }}
                 </option>
               </select>
+              <button
+                v-if="currentGoal"
+                class="text-button"
+                :disabled="!!busy"
+                @click="editTarget = { kind: 'goals', id: currentGoal.id }"
+              >
+                编辑目标信息
+              </button>
               <div class="unit-mobile-picker">
                 <label for="unit-select">学习单元</label
                 ><select
@@ -1564,82 +1654,13 @@ onUnmounted(() => {
               >
             </div>
           </section>
-          <div class="section-heading knowledge-list-heading">
-            <h2>
-              我的知识沉淀 <span>{{ notes.length.toString().padStart(2, '0') }}</span>
-            </h2>
-            <label class="search-field"
-              ><Icon name="search" :size="17" /><input
-                v-model="noteSearch"
-                aria-label="搜索知识笔记"
-                placeholder="搜索笔记与资料"
-            /></label>
-          </div>
-          <p class="import-hint">
-            支持 Markdown、TXT、可提取文字的 PDF 与 Word（.docx），单个文件不超过 10
-            MB。复盘笔记会自动加入。
-          </p>
-          <div v-if="!filteredNotes.length" class="empty-state large-empty">
-            <Icon name="notes" :size="40" />
-            <h2>{{ notes.length ? '还没有找到相关笔记' : '让你的第一个发现，在这里生根' }}</h2>
-            <p>
-              {{
-                notes.length
-                  ? '试试其他关键词，或查看全部知识沉淀。'
-                  : '导入一份资料，或完成一次学习复盘。每篇笔记都是下次行动的起点。'
-              }}
-            </p>
-            <button v-if="notes.length" class="button secondary" @click="noteSearch = ''">
-              查看全部笔记
-            </button>
-          </div>
-          <div v-else class="notes-grid">
-            <article
-              v-for="note in filteredNotes"
-              :key="note.id"
-              :class="['note-card', { expanded: selectedNote === note.id }]"
-            >
-              <div class="note-card-meta">
-                <span class="pill">{{
-                  note.source === 'reflection' || note.source === '复盘'
-                    ? '实践沉淀'
-                    : note.source === 'note'
-                      ? '我的笔记'
-                      : '学习资料'
-                }}</span
-                ><time>{{ date(note.created_at) }}</time
-                ><button
-                  class="icon-button muted"
-                  :aria-label="`删除笔记 ${note.title}`"
-                  :disabled="!!busy"
-                  @click="deleteNote(note)"
-                >
-                  <Icon name="trash" :size="16" />
-                </button>
-              </div>
-              <button
-                class="note-title"
-                :aria-expanded="selectedNote === note.id"
-                @click="selectedNote = selectedNote === note.id ? null : note.id"
-              >
-                <h3>{{ note.title }}</h3>
-              </button>
-              <p class="prose note-content">
-                {{
-                  selectedNote === note.id
-                    ? note.content
-                    : note.content.slice(0, 180) + (note.content.length > 180 ? '…' : '')
-                }}
-              </p>
-              <button
-                class="text-button"
-                @click="selectedNote = selectedNote === note.id ? null : note.id"
-              >
-                {{ selectedNote === note.id ? '收起笔记' : '回看完整笔记'
-                }}<Icon name="arrow" :size="16" />
-              </button>
-            </article>
-          </div>
+          <KnowledgeLibrary
+            v-model:selected="selectedNote"
+            :notes="notes"
+            :busy="!!busy"
+            @edit="editTarget = { kind: 'knowledge', id: $event.id }"
+            @delete="deleteNote"
+          />
         </template>
 
         <template v-else-if="view === 'settings'">
@@ -1704,6 +1725,13 @@ onUnmounted(() => {
       </main>
     </div>
   </div>
+  <RecordEditor
+    v-if="editTarget"
+    :target="editTarget"
+    @close="editTarget = null"
+    @saving="editorSaving"
+    @saved="editorSaved"
+  />
   <dialog ref="goalDialog" class="goal-dialog">
     <form @submit.prevent="createGoal">
       <div class="dialog-heading">
