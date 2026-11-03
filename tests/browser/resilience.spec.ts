@@ -254,15 +254,29 @@ test('deleting a goal removes its drafts and unconfirmed local operations', asyn
   await page.getByRole('button', { name: '一起思考', exact: true }).click()
   await expect(page.getByLabel('待确认的操作')).toBeVisible()
   await page.getByRole('button', { name: '学习概览', exact: true }).click()
-  page.on('dialog', (dialog) => dialog.accept())
-  await page.getByRole('button', { name: `删除目标 ${goal.title}`, exact: true }).click()
-  await expect(page.getByLabel('待确认的操作')).toHaveCount(0)
-  const remaining = await page.evaluate((ids: string[]) => {
+  const unitIds = goal.units.map((unit: { id: string }) => unit.id)
+  const remainingLocalEntries = () => page.evaluate((ids: string[]) => {
     return [localStorage, sessionStorage].flatMap((storage) => Object.entries(storage).filter(([key, value]) =>
       key.startsWith('doknow:v1:') && ids.some((id) => key.includes(`unit:${id}:`) || value.includes(`unit:${id}:`))
     ))
-  }, goal.units.map((unit: { id: string }) => unit.id))
-  expect(remaining).toEqual([])
+  }, unitIds)
+  let releaseDeletion!: () => void
+  const deletionGate = new Promise<void>((resolve) => { releaseDeletion = resolve })
+  await page.route(`**/api/goals/${goal.id}`, async (route) => {
+    if (route.request().method() === 'DELETE') await deletionGate
+    await route.continue()
+  })
+  page.on('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: `删除目标 ${goal.title}`, exact: true }).click()
+  try {
+    expect(await remainingLocalEntries()).not.toEqual([])
+  } finally {
+    releaseDeletion()
+  }
+  await expect(page.getByText('学习目标已删除。', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: `删除目标 ${goal.title}`, exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('待确认的操作')).toHaveCount(0)
+  expect(await remainingLocalEntries()).toEqual([])
 })
 
 test('corrupt recovery metadata cannot turn confirmation into a new write', async ({ page }) => {
