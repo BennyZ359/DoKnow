@@ -65,7 +65,17 @@ flowchart LR
 
 ## 快速开始
 
-需要 Python 3.11+、Node.js 22+。在项目 `DoKnow` 目录打开两个终端。
+需要 Python 3.11+、Node.js 22+。Windows 可在安装下述依赖后，使用项目根目录入口：
+
+```powershell
+.\doknow.ps1 diagnose --demo
+.\doknow.ps1 start --demo
+.\doknow.ps1 stop
+```
+
+`--demo` 使用独立体验库，不访问正式学习数据。去掉该参数沿用现有配置与学习库，启动前先备份。诊断只读，不会隐式建库或迁移；启停只管理本工具启动的服务。端口参数、缺依赖/启动故障处理、JSON 输出和执行策略兼容方式见 [本地运行与诊断](docs/LOCAL_RUNNING.md)。设置页可刷新安全运行状态。
+
+以下双终端手动启动方式继续保留，在项目 `DoKnow` 目录操作。
 
 **终端一：后端（推荐 uv）**
 

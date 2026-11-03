@@ -7,6 +7,7 @@ Resource identifiers are UUID strings. Question identifiers and practice tokens 
 ## Core endpoints
 
 - `GET /health` -> `{status, mode, database}`.
+- `GET /diagnostics` -> `{status: ok|error,mode,database,read_only:true,checks:[{name,status:ok|warning|error|pending,detail,action,revision?,expected_revision?}]}` with `Cache-Control: no-store`. Names are `backend`, `mode`, `database`. HTTP 200 means the report was read, not that every check passed; database/configuration faults appear as checks with error status. Recognized revisions are allowlisted; unknown values are never echoed. No model calls, initialization, migration, learning writes, credentials, connection strings, paths, raw exceptions or learner content. SQLite file inspection uses a temporary main/WAL snapshot to avoid source-side SHM writes; concurrent changes may yield a retryable diagnosis failure. In-memory SQLite uses the existing engine, PostgreSQL uses a read-only transaction. Frontend runtime/dependency and offline port checks are provided by the local CLI, not this endpoint.
 - `GET /dashboard` -> `{goals, reviews_due, total_sessions, knowledge_count, recent_activity}`. `goals` contains the goal objects below.
 - `GET /goals` -> array of goals. `POST /goals` body `{title, motivation, level: beginner|intermediate|advanced, daily_minutes: 10..180}` -> goal including generated units. `GET /goals/{id}` -> goal. `DELETE /goals/{id}` -> 204.
 - Goal: `{id,title,motivation,level,daily_minutes,created_at,updated_at,version,units:[{id,title,objective,position,stage,mastery,review_due_at,review_count,completed_at}],progress}`. Stages `learn`, `practice`, `project`, `teach`, `reflect`, `review`, `complete`. `progress` 0..100.
@@ -41,7 +42,7 @@ Choice assessments additionally store `question_id`, `question`, displayed `opti
 - `POST /knowledge/import` multipart `file` -> entry; .md/.txt/.pdf/.docx, max 10 MB, extracted text max200k characters, PDF max200pages, DOCX expansion max25MB, no file paths exposed.
 - `DELETE /knowledge/{id}` -> 204.
 - `POST /knowledge/ask` `{question}` -> `{answer,sources:[{id,title,excerpt}],mode}`. Retrieval uses all current local notes, independent of list filters, and never the retained original snapshots. No sources means explicitly insufficient materials. Cache keys include current title, body, revision and provider; saved edits and deletions make old cached answers unreachable. A change during an in-flight model/cache read returns 409 `{code:"knowledge_changed",detail}` so the client can ask again against current materials. Old cache entries expire after 10 minutes; Redis is optional.
-- `GET /settings` -> `{mode,provider,model,configured,principles:[{name,practice}],limitations:[]}`. Never return API keys.
+- `GET /settings` -> `{mode,provider,model,configured,principles:[{name,practice}],limitations:[]}`. Never return API keys or connection strings. Provider is allowlisted (`unknown` for an invalid setting); credential-like model names are hidden. `configured` means local configuration validation, not verified model connectivity.
 
 ## Provider module contract (pure service layer)
 

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from .database import make_database
+from .diagnostics import runtime_report, safe_provider_status
 from .editing import EditConflict, export_note, filter_notes, require_version
 from .migrations import initialize_database
 from .cache import AnswerCache, answer_key
@@ -189,9 +190,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     @application.get("/api/settings")
     def settings():
-        status = provider_status()
+        status = safe_provider_status()
         # Explicit whitelist protects any future provider metadata changes.
         return {key: status.get(key) for key in ("mode", "provider", "model", "configured", "limitations")} | {"principles": PRINCIPLES}
+
+    @application.get("/api/diagnostics")
+    def diagnostics(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return runtime_report(engine)
 
     @application.get("/api/dashboard")
     def dashboard(db: DB):

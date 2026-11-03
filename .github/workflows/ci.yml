@@ -18,6 +18,37 @@ jobs:
       - run: uv sync --frozen --extra dev
       - run: uv run --frozen pytest -q
       - run: uv run --frozen ruff check app tests
+      - run: uv run --frozen ruff check ../scripts
+  local-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.21"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: uv sync --frozen --extra dev
+        working-directory: backend
+      - run: npm ci
+        working-directory: frontend
+      - run: uv run --frozen pytest -q tests/test_diagnostics.py tests/test_local_launcher.py
+        working-directory: backend
+      - name: Real Windows demo lifecycle
+        shell: pwsh
+        run: |
+          try {
+            & .\doknow.ps1 start --demo --backend-port 8016 --frontend-port 5186
+            if ($LASTEXITCODE -ne 0) { throw 'Start failed' }
+            & .\doknow.ps1 start --demo --backend-port 8016 --frontend-port 5186
+            if ($LASTEXITCODE -ne 0) { throw 'Duplicate start failed' }
+            & .\doknow.ps1 diagnose --demo --backend-port 8016 --frontend-port 5186
+            if ($LASTEXITCODE -ne 0) { throw 'Diagnosis failed' }
+          } finally {
+            & .\doknow.ps1 stop
+            if ($LASTEXITCODE -ne 0) { throw 'Stop failed' }
+          }
   frontend:
     runs-on: ubuntu-latest
     defaults:

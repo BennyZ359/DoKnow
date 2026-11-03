@@ -6,6 +6,8 @@
 
 ## 升级规则
 
+需要只检查版本而不升级时，在项目根目录执行 `.\doknow.ps1 diagnose`，或在 backend 目录执行 `.venv\Scripts\python -m app.diagnostics`。它不会使用数据库工厂、创建源数据库/侧文件或调用迁移；SQLite 检查在临时副本上完成，包含已提交 WAL。设置页状态也使用只读检查。诊断不是备份，具体边界见 [本地运行与诊断](LOCAL_RUNNING.md)。
+
 应用启动会通过 Alembic 检查并升级数据库：
 
 - 新数据库创建完整表结构，写入版本 `0004_editable_records`。

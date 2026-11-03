@@ -1,0 +1,2 @@
+# Keep launcher checks consistent with the backend, independent of the caller's cwd.
+extend = "../backend/pyproject.toml"

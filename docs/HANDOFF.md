@@ -1,122 +1,74 @@
 # DoKnow 开发交接
 
-更新日期：2026-11-03（Asia/Shanghai）。先读本文，再读 [进度记录](PROGRESS.md)。功能是否完成以进度记录和实际验证为准。
+更新日期：2026-11-03（Asia/Shanghai）。先核对实际 Git 状态，再读 [进度记录](PROGRESS.md)。
 
-## 当前交付状态
+## 当前状态
 
-用户选择先完善**个人本地版**：保留“学 → 练 → 实战 → 讲解 → 复盘 → 间隔复习”的学习闭环，先解决使用过程中丢输入、结果不明确和数据难以恢复的问题。
+P0、P1-1 评价历史、P1-2 多题与错题巩固、P1-4 笔记管理和 P1-3 目标基础编辑已交付。本轮从 `6eb33927bca6ac60a5dea9a4161eab5ae1e01325` 开始，已核对工作区干净、远端一致，基线 [CI 41580247743](https://github.com/BennyZ359/DoKnow/actions/runs/41580247743) 成功。
 
-P0 五项可靠性工作、P1-1 评价来源与历史、P1-2 题库与错题巩固已交付。刚完成的一轮范围为 **P1-4 知识笔记管理，以及 P1-3 的学习目标基础编辑**。课程重生成、难度调整和单元重排留待单独处理；多用户、公网部署、OCR、向量检索、执行用户代码属于后续路线，见 [路线图](ROADMAP.md)。
+本轮实现 **P1-6 启动与诊断，以及相关 P1-8 交互修正**：
 
-**本轮功能已完成并推送**，版本 `3ce1eee`，对应 [CI 41574450399](https://github.com/BennyZ359/DoKnow/actions/runs/41574450399) 四项全部成功。笔记可编辑标题/正文/标签、组合搜索与筛选、导出 Markdown，原始记录只读保留；目标可编辑标题、学习动机及每日时间，课程与学习证据不变。编辑使用读取时的版本防止静默覆盖，PATCH 回执可在丢响应或重启后恢复。后端 **145 项**、浏览器 **27 项**通过，构建/格式/Ruff/Compose 静态检查通过。数据库版本为 `0004_editable_records`，正式库未升级。本轮交接记录与后续文档提交的核对方式见 [进度记录](PROGRESS.md) 顶部。
+- 项目根目录 `doknow.ps1` 提供 start/stop/diagnose；跨平台标准库入口是 `scripts/local.py`。
+- Windows 监督进程以 Job Object 管理自己启动的整组服务，子进程门控防止登记前逃逸；重复启动不创建第二组，端口冲突不杀占用者，失败会收尾已启动服务。
+- `--demo` 使用 `.cache/local/demo.db`，覆盖模型为 demo、禁用 Redis。默认 start 沿用环境配置和学习库，仍会按原有规则迁移，使用前先备份。
+- 离线与设置页诊断不会建库或升级。SQLite 使用包含 WAL 的临时副本，源数据库与侧文件不变。PostgreSQL 使用只读事务和超时，但实际容器尚未验证。
+- 设置页由 `SettingsView.vue`、`RuntimeStatus.vue` 承担，支持键盘刷新、焦点、失败重试及手机布局。设置页不再等待学习概览数据读取，服务异常时仍可查看诊断指引。
+- 新增 `/api/diagnostics`；设置/诊断只输出安全字段，不返回密钥、含凭据地址、原始异常或学习正文。
 
-本轮从 `81ade24` 开始，已核对本地与远端一致、工作区干净，并查询 [基线 CI 41569010262](https://github.com/BennyZ359/DoKnow/actions/runs/41569010262) 成功。此前 P1-1/P1-2 后端 108 项、浏览器 17 项通过；这些历史结果不能替代本轮验证。新提交必须按自己的 SHA 检查 CI。
+本轮完整回归及提交/CI 状态以 [PROGRESS.md](PROGRESS.md) 顶部为准。新增 Windows CI 后共五项任务（backend、frontend、browser、compose、local-windows）；按最终实际 SHA 查询，不能用基线或功能提交的成功代替后续提交。
 
-交接提交 `738e721d79d5368f4bc9178f13a5efe94638623e` 已推送，自己的 [CI 41574937445](https://github.com/BennyZ359/DoKnow/actions/runs/41574937445) 四项全部成功。本文可能随后补充下一会话说明，因此恢复时仍须读取实际 HEAD、工作区与远端，不能把本文中的历史 SHA 当作永远最新的提交。
+## 项目位置与运行
 
-## 下一会话建议：启动与诊断（尚未开工）
+- 实际仓库：`D:\Project\learn-agent\DoKnow`。父目录 learn-agent 另有空 Git 仓库，不要在父目录提交。
+- 分支：`develop`；远端：`origin`，`BennyZ359/DoKnow`。
+- 后端环境：`backend/.venv`。数据库版本仍为 `0004_editable_records`，本轮没有新迁移，正式学习库未升级。
+- 运行与排障：[LOCAL_RUNNING.md](LOCAL_RUNNING.md)；数据保护：[DATA_MANAGEMENT.md](DATA_MANAGEMENT.md)。
+- Windows 示例：`.\doknow.ps1 start --demo`、`.\doknow.ps1 diagnose --demo`、`.\doknow.ps1 stop`。
+- `.cache/local/state.json` 包含本机控制令牌，不提交或分享。`events.log` 只包含安全阶段信息；原始进程输出不持久保存。
 
-用户准备新开会话继续。推荐从 **P1-6 启动与诊断，以及相关 P1-8 交互修正** 开始；本节是交接计划，没有提前实现这些功能。
+## 下轮范围
 
-| 工作 | 具体范围与验收 |
-| --- | --- |
-| 本地启动、停止入口 | 优先覆盖当前 Windows 环境，明确依赖和端口检查、重复启动行为及失败提示；只管理本工具启动的进程，保留已有服务和学习数据。保留现有手动启动方式 |
-| 只读诊断 | 检查 Python/Node 与依赖、前后端连通性、运行模式和数据库 schema 版本，给出可执行的恢复指引。诊断本身不能创建、升级或修改数据库；demo 是可正常运行的模式 |
-| 设置页状态展示 | 沿用现有 `/health`、`/settings` 能力，按需要扩展安全状态；清楚展示模式、服务和数据库状态，不返回密钥或含凭据的连接串 |
-| 相关交互修正 | 完善新增流程的键盘操作、焦点、错误提示和手机布局；按功能边界组织组件，保留现有学习、编辑与恢复路径 |
-| 回归与交付 | 验证正常启动、重复启动、端口占用、缺依赖、部分启动失败后的收尾、只停止自身进程及诊断不写库；扩充必要测试并跑后端/浏览器完整回归、前端构建与格式检查，更新文档，提交推送 develop 并核对最终 SHA 的 CI |
+P1-6 与本轮相关 P1-8 已实现，不要重复开发启停和状态页。下一轮可单独设计 P1-3 剩余的课程重生成、难度调整、单元重排，明确变更如何保留已有学习证据。真实模型与容器分别依赖用户模型配置/费用范围和运行中的 Docker，继续列为未验证，不自动纳入。
 
-继续使用 **demo、模拟模型和独立测试数据库**。正式学习库保持原样；不需要模型密钥或 Docker 引擎。真实模型联调、实际容器验证、课程重生成/难度/顺序调整、多用户、OCR 和代码执行仍留在后续范围。
+默认继续使用 demo、模拟模型、独立测试数据库。保留正式学习资料，不调用付费模型，不启动 Docker。任何新的诊断代码不得隐式初始化或迁移数据库；任何新的进程管理不得根据端口或过期 PID 结束未知进程。
 
-新会话先读本文、`PROGRESS.md`、`ROADMAP.md`、`API_CONTRACT.md`，再读 `README.md` 与 `DATA_MANAGEMENT.md` 中的运行和数据规则。代码入口：`backend/app/main.py` 的 health/settings、`backend/app/data.py` 的数据管理、`backend/app/migrations/`、`frontend/src/App.vue` 的设置页与 `api.ts`、`tests/browser/playwright.config.ts` 的测试服务启动。先核对实际 Git 状态，再把进度中的下一轮状态更新为进行中。
+## 恢复工作与代码入口
 
-## 项目位置与版本
+1. 阅读本文、`PROGRESS.md`、`ROADMAP.md`、`API_CONTRACT.md`。
+2. 核对工作目录、HEAD、分支、工作区、远端与 HEAD 的 CI。历史记录只作参考。
+3. 数据库诊断：`backend/app/diagnostics.py`；现有迁移：`backend/app/migrations/`；接口：`backend/app/main.py`。
+4. 本地进程：`scripts/local.py`、`scripts/processes.py`；测试：`backend/tests/test_local_launcher.py`、`test_diagnostics.py`。
+5. 前端：`frontend/src/components/SettingsView.vue`、`RuntimeStatus.vue`、`App.vue`；浏览器：`tests/browser/settings.spec.ts`。
+6. 在进度顶部写明下一项正在做的可验收结果，完成后更新实际验证。
 
-- 实际仓库：`D:\Project\learn-agent\DoKnow`。父目录 `D:\Project\learn-agent` 另有一个空 Git 仓库，不要在父目录提交。
-- 当前开发分支：`develop`；远程：`origin`，仓库 `BennyZ359/DoKnow`。
-- 首版基线：`53bf275c1769f7cf8af6e758d37cf740c0110aa5`；此前 P1 基线：`d016edc`；本轮基线：`81ade24`。
-- 具体变更、验证与交付结果记入 `PROGRESS.md`，不要把历史测试结果当作修改后的验证。
-- Python 环境在 `backend/.venv`；Node、uv、Chrome 和 npm 依赖已安装。
+## 验证
 
-## 阅读顺序和代码入口
-
-1. `README.md`：启动、产品能力与部署边界。
-2. `docs/PROGRESS.md`：已完成项、在做事项、验证和阻塞。
-3. `docs/ROADMAP.md`：下一批工作与验收标准。
-4. `docs/LEARNING_DESIGN.md`：学习理念与阶段约束。
-5. `docs/ARCHITECTURE.md`、`docs/API_CONTRACT.md`：数据和接口边界。
-6. `backend/app/main.py`、`models.py`、`database.py`、`serialization.py`：接口、证据记录、并发和序列化。
-7. `backend/app/services/`：课程规划、导师、评价、文档检索与模型适配。
-8. `frontend/src/App.vue`、`api.ts`、`editing.ts`、`writes.ts`；`components/KnowledgeLibrary.vue`、`RecordEditor.vue`：笔记管理和编辑冲突；`tests/browser/`：学习交互与浏览器回归。
-
-## 不需要用户熬夜配合的默认选择
-
-- 使用 demo 模式和独立测试数据库完成本轮任务，不需要模型密钥。
-- 本轮使用 demo 或模拟 HTTP 模型，不依赖 `.env` 或 Docker 引擎。
-- 不改变用户正式学习数据；迁移和恢复实验先使用临时数据库或备份副本。
-- 没有真实模型或 Docker 时，记录“未验证”，继续完成其他工作。
-- 保留 SQLite 单人本地运行和 Docker/PostgreSQL 配置，不将本轮当作多人服务发布。
-
-## Git 操作
-
-操作约定：
-
-- 每次写 Git 前核对工作目录、分支、工作区和暂存差异。按具体文件暂存，保留已有无关修改。
-- 沿用 `develop`，不自动向 `main` 发布；不强制推送、不重写历史、不删除用户分支。
-- 如果远端发生变化，先读取与比较，不能用强推覆盖。需要人工才能解决时记录阻塞，保留本地成果。
-- 本次使用现有配置成功推送；无需再套用历史的禁用代理方案。
-- Windows 凭据存储可能需要受控执行。使用现有授权完成普通提交和推送；审批拒绝时保留结果并说明原因，不导出、打印或另存凭据。
-- `.env`、`backend/data/`、备份、`.cache/`、依赖和浏览器输出都不能加入提交。
-
-## 连续工作的执行方式
-
-先更新 `PROGRESS.md` 的“正在做”，以一项可验证的结果为单位推进。每项完成记录变更、测试命令、实际结果和剩余限制，随后继续下一项。会话压缩或中断后，从该文件恢复，不从头重做。
-
-电脑需保持供电、网络可用且不休眠，Codex 保持打开。本轮环境使用受限文件系统和自动审批；仓库文档无法改变这些权限。用户授权也不保证凭据、网络、额度、审批服务或电脑状态整晚可用。遇到环境阻塞先完成不依赖它的任务，在进度中留下具体原因；不要为了无人值守关闭权限控制。
-
-笔记管理与目标基础编辑已交付。当前只补充交接文档，没有自动创建新会话、定时任务或循环自动化。下一会话接到开发指令后，再按上节范围推进。
-
-## 验证方式
-
-各命令在标注的目录执行。每一步失败都应处理或记录，不要让后一个成功命令掩盖前一个失败。
-
-后端（`backend/`）：
+后端目录：
 
 ```powershell
-uv sync --frozen --extra dev
-uv run --frozen pytest -q
-uv run --frozen ruff check app tests
+.venv/Scripts/python -m pytest -q
+.venv/Scripts/ruff check app tests ../scripts
 ```
 
-前端（`frontend/`）：
+前端目录：
 
 ```powershell
-npm ci
 npm run build
 npm run format:check
 ```
 
-浏览器（`tests/browser/`）：
+浏览器目录：
 
 ```powershell
-npm ci
 npm test
 ```
 
-浏览器测试使用独立 SQLite 文件及 8001/5174 端口，不要指向正式 `backend/data/doknow.db`。同一时间只运行一个浏览器测试进程。需要验证复习时间时，只调整测试时钟或测试数据库。
+浏览器使用独立 SQLite、8001/5174 端口，不连接正式数据库。同一时间只运行一个 runner。当前本机 Windows Playwright 的 webServer 收尾可能等待其服务进程；若用例已结束而 runner 未退出，先依据本次日志核对本次启动的确切进程，再停止它们并取得最终汇总。不要按端口批量杀进程。新的本地启动工具已有独立的正常停止及异常清理测试，不能把 Playwright 收尾问题混作产品启停失败。
 
-项目根目录：
+根目录检查 `docker --config .cache/docker compose config --quiet`（仅静态，不启动引擎）、`git diff --check`、Markdown 本地链接。CI 的 Windows 任务也运行真实 demo 启停与诊断。
 
-```powershell
-docker compose config --quiet
-git diff --check
-git status --short --branch
-```
+## Git 与数据规则
 
-实际 Docker 验证需运行中的引擎。真实模型联调留给后续：用户配置服务地址、模型名和服务端密钥，并给出明确费用范围后再运行少量测试，不把密钥写入聊天或仓库。首版的模型请求模拟测试不等于真实服务联调。
+每次 Git 写操作前核对目录、分支和暂存差异，按文件暂存。沿用 develop，普通推送；不强推、不重写历史、不向 main 发布。远端有新提交时先比较，不能覆盖。Windows 凭据存储可能需要受控执行，使用现有授权，不打印或导出凭据。
 
-## 新会话如何开始
-
-继续使用当前项目新开会话，第一条消息明确实际仓库为 `D:\Project\learn-agent\DoKnow`，要求读取本文与进度记录，按“启动与诊断”范围直接推进。不要把父目录空 Git 仓库当作实际项目。本轮不要求额外配置账号、模型密钥或启动 Docker。
-
-日常使用新版前，按数据管理文档先备份再重启后端；开发验证仍只使用独立测试库。以后安排真实模型联调时再配置服务并明确费用范围，安排容器验证时再启动 Docker。
+`.env`、`backend/data/`、备份、`.cache/`、依赖与浏览器输出均不得提交。实际学习库的升级、恢复和容器验证需要在独立备份/测试库先验证。
