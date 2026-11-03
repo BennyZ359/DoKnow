@@ -95,6 +95,29 @@ def test_port_conflict_leaves_external_listener_alive(launcher, monkeypatch):
         assert not local.free_port(launcher.backend_port)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX TIME_WAIT and SO_REUSEADDR semantics")
+def test_time_wait_is_reusable_but_an_active_listener_is_not():
+    with socket.socket() as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        assert not local.free_port(port)
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as client:
+            accepted, _ = server.accept()
+            accepted.close()  # Server closes first, leaving its connection in TIME_WAIT.
+            assert client.recv(1) == b""
+    with socket.socket() as conservative_probe:
+        with pytest.raises(OSError):
+            conservative_probe.bind(("127.0.0.1", port))
+    assert local.free_port(port)
+    with socket.socket() as replacement:
+        replacement.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        replacement.bind(("127.0.0.1", port))
+        replacement.listen()
+        assert not local.free_port(port)
+
+
 def test_stale_state_never_terminates_pid(launcher):
     local.CACHE.mkdir()
     local.save_state({"port": launcher.backend_port, "token": "stale", "pid": os.getpid()})

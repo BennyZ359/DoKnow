@@ -173,6 +173,11 @@ def free_port(port):
     with socket.socket() as sock:
         if os.name == "nt":
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            # Match HTTP servers on POSIX: a closed connection in TIME_WAIT is
+            # reusable. SO_REUSEADDR still rejects an active TCP listener;
+            # SO_REUSEPORT, which would allow sharing that listener, is not set.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
             return True
