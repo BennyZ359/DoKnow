@@ -11,6 +11,7 @@
 - 前端生产构建、Prettier、Ruff、Compose 静态配置和11份 Markdown 本地链接通过。手机预览截图已查看，无横向溢出；截图保存在未提交的 `.cache/browser/course-preview-mobile.png`。
 - 初轮焦点恢复、重排当前列表显示和旧自定义标题的 demo 模板路径问题均修复；设置浏览器断言随新 schema 版本更新。完整回归保留所有原有用例和数据/并发断言。
 - 测试使用 demo、模拟模型及独立 SQLite；未调用付费模型、未启动 Docker。真实模型与 PostgreSQL/Redis 实际容器仍未验证。
+- 交付提交 `4c4956869720f709d6d322f3c5960533572f2be0` 的 [CI 41597051504](https://github.com/BennyZ359/DoKnow/actions/runs/41597051504) 五项全部成功：backend、frontend、browser、compose、local-windows。后续文档提交仍需查询自己的 SHA。
 
 ## 2026-11-03：启动与诊断
 
