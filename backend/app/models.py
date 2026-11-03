@@ -17,6 +17,52 @@ def identifier() -> str:
     return str(uuid4())
 
 
+class Roadmap(Base):
+    __tablename__ = "roadmaps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    topic: Mapped[str] = mapped_column(String(200))
+    plan: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ConceptGraph(Base):
+    __tablename__ = "concept_graphs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    topic: Mapped[str] = mapped_column(String(200))
+    summary: Mapped[str] = mapped_column(Text)
+    focus_id: Mapped[str] = mapped_column(String(36))
+    provenance: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class KnowledgeEntity(Base):
+    __tablename__ = "knowledge_entities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    graph_id: Mapped[str] = mapped_column(ForeignKey("concept_graphs.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(60))
+    name: Mapped[str] = mapped_column(String(70))
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    aliases: Mapped[list] = mapped_column(JSON)
+    properties: Mapped[dict] = mapped_column(JSON)
+    provenance: Mapped[dict] = mapped_column(JSON)
+
+
+class KnowledgeRelation(Base):
+    __tablename__ = "knowledge_relations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=identifier)
+    graph_id: Mapped[str] = mapped_column(ForeignKey("concept_graphs.id", ondelete="CASCADE"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("knowledge_entities.id", ondelete="CASCADE"), index=True)
+    target_id: Mapped[str] = mapped_column(ForeignKey("knowledge_entities.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    explanation: Mapped[str] = mapped_column(Text)
+    provenance: Mapped[dict] = mapped_column(JSON)
+
+
 class Goal(Base):
     __tablename__ = "goals"
 

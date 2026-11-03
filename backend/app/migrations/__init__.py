@@ -8,13 +8,15 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.engine import Connection, Engine
 
-from .schema import baseline_metadata, course_metadata, current_metadata, editable_metadata, learning_metadata
+from .schema import baseline_metadata, concept_graph_metadata, course_metadata, current_metadata, editable_metadata, learning_metadata, roadmap_metadata
 
 BASELINE = "0001_baseline"
 RECEIPTS = "0002_request_receipts"
 LEARNING = "0003_learning_evidence"
 EDITABLE = "0004_editable_records"
-CURRENT = "0005_course_changes"
+COURSES = "0005_course_changes"
+ROADMAPS = "0006_roadmaps"
+CURRENT = "0007_concept_graph"
 VERSION_TABLE = "alembic_version"
 
 
@@ -98,8 +100,12 @@ def metadata_for_revision(revision: str) -> MetaData:
         return learning_metadata()
     if revision == EDITABLE:
         return editable_metadata()
-    if revision == CURRENT:
+    if revision == COURSES:
         return course_metadata()
+    if revision == ROADMAPS:
+        return roadmap_metadata()
+    if revision == CURRENT:
+        return concept_graph_metadata()
     raise MigrationError("Database revision is unknown to this application; use the matching application version.")
 
 

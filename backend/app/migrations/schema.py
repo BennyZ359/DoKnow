@@ -106,3 +106,51 @@ def course_metadata() -> MetaData:
         Column("applied_at", DateTime(timezone=True), nullable=True),
     )
     return metadata
+
+
+def roadmap_metadata() -> MetaData:
+    metadata = course_metadata()
+    Table(
+        "roadmaps", metadata,
+        Column("id", String(36), primary_key=True),
+        Column("topic", String(200), nullable=False),
+        Column("plan", JSON, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+    )
+    return metadata
+
+
+def concept_graph_metadata() -> MetaData:
+    metadata = roadmap_metadata()
+    Table(
+        "concept_graphs", metadata,
+        Column("id", String(36), primary_key=True),
+        Column("topic", String(200), nullable=False),
+        Column("summary", Text, nullable=False),
+        Column("focus_id", String(36), nullable=False),
+        Column("provenance", JSON, nullable=False),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+    )
+    Table(
+        "knowledge_entities", metadata,
+        Column("id", String(36), primary_key=True),
+        Column("graph_id", String(36), ForeignKey("concept_graphs.id", ondelete="CASCADE"), nullable=False, index=True),
+        Column("key", String(60), nullable=False),
+        Column("name", String(70), nullable=False),
+        Column("kind", String(20), nullable=False, index=True),
+        Column("description", Text, nullable=False),
+        Column("aliases", JSON, nullable=False),
+        Column("properties", JSON, nullable=False),
+        Column("provenance", JSON, nullable=False),
+    )
+    Table(
+        "knowledge_relations", metadata,
+        Column("id", String(36), primary_key=True),
+        Column("graph_id", String(36), ForeignKey("concept_graphs.id", ondelete="CASCADE"), nullable=False, index=True),
+        Column("source_id", String(36), ForeignKey("knowledge_entities.id", ondelete="CASCADE"), nullable=False, index=True),
+        Column("target_id", String(36), ForeignKey("knowledge_entities.id", ondelete="CASCADE"), nullable=False, index=True),
+        Column("kind", String(24), nullable=False, index=True),
+        Column("explanation", Text, nullable=False),
+        Column("provenance", JSON, nullable=False),
+    )
+    return metadata

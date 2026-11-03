@@ -59,7 +59,7 @@ def test_new_database_and_repeated_startup(tmp_path):
     try:
         assert initialize_database(engine) == CURRENT
         assert initialize_database(engine) == CURRENT
-        assert set(inspect(engine).get_table_names()) == {*LEGACY_TABLES, "request_receipts", "course_changes", "alembic_version"}
+        assert set(inspect(engine).get_table_names()) == {*LEGACY_TABLES, "request_receipts", "course_changes", "roadmaps", "concept_graphs", "knowledge_entities", "knowledge_relations", "alembic_version"}
     finally:
         engine.dispose()
 
@@ -298,3 +298,66 @@ def test_editable_revision_upgrade_preserves_all_values_and_rolls_back(legacy, m
     assert capture() == before
     with engine.connect() as connection:
         assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ("0004_editable_records" if fail else CURRENT)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_roadmap_upgrade_keeps_course_evidence_and_rolls_back(legacy, monkeypatch, fail):
+    _, engine, _, _ = legacy
+    from app import migrations
+    with engine.begin() as connection:
+        config = configuration()
+        config.attributes["connection"] = connection
+        migrations.command.stamp(config, "0001_baseline")
+        migrations.command.upgrade(config, "0005_course_changes")
+    names = [name for name in inspect(engine).get_table_names() if name != "alembic_version"]
+    def capture():
+        with engine.connect() as connection:
+            return {name: connection.exec_driver_sql(f'SELECT * FROM "{name}"').all() for name in names}
+    before = capture()
+    if fail:
+        upgrade = migrations.command.upgrade
+        def broken(*args, **kwargs):
+            upgrade(*args, **kwargs)
+            raise RuntimeError("roadmap migration interrupted")
+        monkeypatch.setattr(migrations.command, "upgrade", broken)
+        with pytest.raises(RuntimeError, match="interrupted"):
+            initialize_database(engine)
+        assert "roadmaps" not in inspect(engine).get_table_names()
+    else:
+        assert initialize_database(engine) == CURRENT
+        assert "roadmaps" in inspect(engine).get_table_names()
+    assert capture() == before
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ("0005_course_changes" if fail else CURRENT)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_concept_graph_upgrade_preserves_existing_roadmaps(legacy, monkeypatch, fail):
+    _, engine, _, _ = legacy
+    from app import migrations
+    with engine.begin() as connection:
+        config = configuration()
+        config.attributes["connection"] = connection
+        migrations.command.stamp(config, "0001_baseline")
+        migrations.command.upgrade(config, "0006_roadmaps")
+        connection.exec_driver_sql("INSERT INTO roadmaps VALUES ('old-map', '已有主题', '{\"nodes\":[]}', '2026-11-03 00:00:00')")
+    names = [name for name in inspect(engine).get_table_names() if name != "alembic_version"]
+    def capture():
+        with engine.connect() as connection:
+            return {name: connection.exec_driver_sql(f'SELECT * FROM "{name}"').all() for name in names}
+    before = capture()
+    if fail:
+        upgrade = migrations.command.upgrade
+        def broken(*args, **kwargs):
+            upgrade(*args, **kwargs)
+            raise RuntimeError("concept migration interrupted")
+        monkeypatch.setattr(migrations.command, "upgrade", broken)
+        with pytest.raises(RuntimeError, match="interrupted"):
+            initialize_database(engine)
+        assert "knowledge_entities" not in inspect(engine).get_table_names()
+    else:
+        assert initialize_database(engine) == CURRENT
+        assert {"concept_graphs", "knowledge_entities", "knowledge_relations"} <= set(inspect(engine).get_table_names())
+    assert capture() == before
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ("0006_roadmaps" if fail else CURRENT)

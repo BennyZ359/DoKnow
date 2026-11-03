@@ -22,7 +22,7 @@ function valid(value: unknown): value is PendingWrite {
     /^[A-Za-z0-9._:-]{8,128}$/.test(entry.key) &&
     typeof entry.scope === 'string' &&
     typeof entry.path === 'string' &&
-    /^\/(goals(?:\/[a-zA-Z0-9-]+(?:\/course\/(preview|apply))?)?|knowledge(?:\/[a-zA-Z0-9-]+)?|units\/[a-zA-Z0-9-]+\/(learn|practice|project|teach|reflect|review|chat))$/.test(
+    /^\/(graphs|roadmaps|goals(?:\/[a-zA-Z0-9-]+(?:\/course\/(preview|apply))?)?|knowledge(?:\/[a-zA-Z0-9-]+)?|units\/[a-zA-Z0-9-]+\/(learn|practice|project|teach|reflect|review|chat))$/.test(
       entry.path
     ) &&
     (entry.method === undefined || entry.method === 'POST' || entry.method === 'PATCH') &&

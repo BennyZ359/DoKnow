@@ -107,3 +107,15 @@ Cross-origin local clients can send `Idempotency-Key` with POST or PATCH; CORS e
 ## Ownership
 
 Backend agent: backend/app excluding services/, backend/tests core tests; owns schemas/models/routes/database. Frontend agent: frontend/ only. Intelligence agent: backend/app/services/ and backend/tests/test_services.py only. Root: configuration, dependencies, deployment, docs, integration/E2E and final fixes.
+
+## 旧版课程路线接口（2026-11-03 保留）
+
+`/api/roadmaps` 保留上一版课程依赖路线及恢复能力。新首页使用下面的实体关系接口，不将旧路线当作概念知识图谱。
+
+## 概念知识图谱接口
+
+`POST /api/graphs` 接收 `{"topic":"机器学习"}` 并返回已持久化的图谱，支持幂等键与原子回执。`GET /api/graphs` 返回摘要；`GET /api/graphs/{id}` 返回实体、语义关系、属性、别名、来源以及中心实体。
+
+`GET /api/graphs/{id}/entities` 支持 `q`（名称/别名）、`kind`（实体类型）。`GET /api/graphs/{id}/neighbors/{entity_id}` 支持 `depth=1..3`、`direction=both|in|out`、可重复的 `relation` 类型筛选。`GET /api/graphs/{id}/path` 接收 `source`、`target`、`direction=both|out` 和可重复 `relation`，返回 `found`、`entity_ids`、`relation_ids`。
+
+边是独立有向断言，允许多关系及语义环，不作课程拓扑排序。路径中的边保留原始事实方向；双向遍历不代表学习或因果顺序。找不到路径返回 `found:false`，不存在或跨图谱实体返回 404，非法关系/深度返回 422。详细模型见 [知识图谱](KNOWLEDGE_MAP.md)。

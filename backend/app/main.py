@@ -17,20 +17,22 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from .database import make_database
-from . import courses
+from . import courses, graph_store
 from .diagnostics import runtime_report, safe_provider_status
 from .editing import EditConflict, export_note, filter_notes, require_version
 from .migrations import initialize_database
 from .cache import AnswerCache, answer_key
 from .idempotency import DEFER_COMMIT, IdempotentRoute, erase_receipts
-from .models import CourseChange, Goal, KnowledgeEntry, LearningSession, Unit, now_utc
+from .models import ConceptGraph, CourseChange, Goal, KnowledgeEntry, LearningSession, Roadmap, Unit, now_utc
 from .practice import StalePractice, grade_practice, restart_practice
 from .schemas import ChatInput, GoalInput, GoalUpdate, KnowledgeInput, KnowledgeUpdate, LearnInput, PracticeInput, QuestionInput, ReflectionInput, ReviewInput, SubmissionInput
 from .schemas import CourseApplyInput, CoursePreviewInput
-from .serialization import goal_data, knowledge_data, session_data, unit_data
+from .serialization import goal_data, knowledge_data, session_data, timestamp, unit_data
 from .services.knowledge import answer_question, extract_document
 from .services.learning import ReplacementPlan, evaluate_submission, generate_plan, provider_status, regenerate_units, tutor_reply
 from .services.providers import ProviderError
+from .services.roadmaps import RoadmapInput, RoadmapPlan, UnsupportedDemoTopic, generate_roadmap
+from .services.concept_graph import generate_concept_graph
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -224,6 +226,85 @@ def create_app(database_url: str | None = None) -> FastAPI:
     def list_goals(db: DB):
         items = db.scalars(select(Goal).order_by(Goal.created_at.desc()).options(selectinload(Goal.units))).all()
         return [goal_data(item) for item in items]
+
+    @application.post("/api/graphs", status_code=201)
+    async def create_concept_graph(body: RoadmapInput, db: DB):
+        try:
+            body.topic.encode("utf-8")
+        except UnicodeEncodeError:
+            raise HTTPException(422, "输入包含无法保存的字符。")
+        try:
+            result = await generate_concept_graph(body.topic)
+            item = graph_store.create_graph(db, body.topic, result)
+        except UnsupportedDemoTopic as error:
+            raise HTTPException(422, str(error))
+        except (ValueError, KeyError, TypeError):
+            raise ProviderError("返回的知识实体或关系不完整，图谱未保存，请重试。")
+        save(db)
+        return graph_store.graph_data(db, item.id)
+
+    @application.get("/api/graphs")
+    def list_graphs(db: DB):
+        return [graph_store.graph_summary(db, graph) for graph in db.scalars(select(ConceptGraph).order_by(ConceptGraph.created_at.desc())).all()]
+
+    @application.get("/api/graphs/{graph_id}")
+    def fetch_graph(graph_id: str, db: DB):
+        return graph_store.graph_data(db, graph_id)
+
+    @application.get("/api/graphs/{graph_id}/entities")
+    def search_graph(graph_id: str, db: DB, q: str = Query(default="", max_length=200), kind: str | None = None):
+        return graph_store.search_entities(db, graph_id, q, kind)
+
+    @application.get("/api/graphs/{graph_id}/neighbors/{entity_id}")
+    def graph_neighbors(graph_id: str, entity_id: str, db: DB, depth: int = Query(default=1, ge=1, le=3),
+                        relation: list[str] | None = Query(default=None), direction: Literal["both", "in", "out"] = "both"):
+        return graph_store.neighborhood(db, graph_id, entity_id, depth, relation, direction)
+
+    @application.get("/api/graphs/{graph_id}/path")
+    def graph_path(graph_id: str, source: str, target: str, db: DB,
+                   relation: list[str] | None = Query(default=None), direction: Literal["both", "out"] = "both"):
+        return graph_store.shortest_path(db, graph_id, source, target, relation, direction)
+
+    def roadmap_data(item: Roadmap, *, detailed: bool = True):
+        result = {"id": item.id, "topic": item.topic, "created_at": timestamp(item.created_at),
+                  "node_count": len(item.plan["nodes"]), "source": item.plan["source"]}
+        return {**item.plan, **result} if detailed else result
+
+    @application.get("/api/roadmaps")
+    def list_roadmaps(db: DB):
+        items = db.scalars(select(Roadmap).order_by(Roadmap.created_at.desc())).all()
+        return [roadmap_data(item, detailed=False) for item in items]
+
+    @application.get("/api/roadmaps/{roadmap_id}")
+    def fetch_roadmap(roadmap_id: str, db: DB):
+        item = db.get(Roadmap, roadmap_id)
+        if item is None:
+            raise HTTPException(404, "没有找到这张知识图谱，可以返回重新规划。")
+        return roadmap_data(item)
+
+    @application.post("/api/roadmaps", status_code=201)
+    async def create_roadmap(body: RoadmapInput, db: DB):
+        try:
+            body.topic.encode("utf-8")
+        except UnicodeEncodeError:
+            raise HTTPException(422, "输入包含无法保存的字符，请重新输入。")
+        try:
+            plan = await generate_roadmap(body.topic)
+        except UnsupportedDemoTopic as error:
+            raise HTTPException(422, str(error))
+        try:
+            validated = RoadmapPlan.model_validate({
+                key: plan[key] for key in ("objective", "assumptions", "target_node_id", "nodes")
+            }).model_dump()
+            if plan["source"] not in {"demo", "ai"}:
+                raise ValueError("Invalid source")
+            validated.update(source=plan["source"], source_note=plan["source_note"])
+        except (ValueError, KeyError, TypeError):
+            raise ProviderError("规划没有形成完整的前置知识图谱，请重试；本次未保存结果。")
+        item = Roadmap(topic=body.topic, plan=validated)
+        db.add(item)
+        save(db)
+        return roadmap_data(item)
 
     @application.post("/api/goals", status_code=201)
     async def create_goal(body: GoalInput, db: DB):

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 20 })
 const paths: Record<string, string> = {
+  graph: 'M9 3h6v5H9V3ZM2 16h6v5H2v-5Zm14 0h6v5h-6v-5ZM12 8v4M5 16v-4h14v4',
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  download: 'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',
   home: 'M3 10.5 12 3l9 7.5V21h-6v-7H9v7H3V10.5Z',
   book: 'M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1m0-15c3-2 6-2 9-1v15c-3-1-6-1-9 1V5Z',
   repeat: 'M20 7H7a4 4 0 0 0-4 4m17-4-4-4m4 4-4 4M4 17h13a4 4 0 0 0 4-4m-17 4 4 4m-4-4 4-4',

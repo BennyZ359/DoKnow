@@ -52,7 +52,7 @@ def database_check(connection) -> dict:
     if versioned:
         revisions = connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
         if len(revisions) != 1 or revisions[0] not in {
-            BASELINE, "0002_request_receipts", "0003_learning_evidence", "0004_editable_records", CURRENT,
+            BASELINE, "0002_request_receipts", "0003_learning_evidence", "0004_editable_records", "0005_course_changes", "0006_roadmaps", CURRENT,
         }:
             return check("database", "error", "数据库版本未知或不明确。", "保留原库，使用匹配的应用版本；不要手工修改版本表。")
         revision = revisions[0]

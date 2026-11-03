@@ -16,7 +16,7 @@ function makeDue(id: string) {
 test('learning evidence, wrong answer, teach-back, reflection and delayed recall survive refresh', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  await page.goto('/')
+  await page.goto('/#/dashboard')
   await expect(page.getByRole('heading', { name: /让知识生根/ })).toBeVisible()
   await page.getByRole('button', { name: '新建学习目标', exact: true }).click()
   await page.getByLabel('我的学习目标', { exact: true }).fill('学习 Python 基础 · 浏览器验证')

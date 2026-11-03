@@ -181,6 +181,10 @@ def response_scope(request: Request, db: Session, response: Response) -> str:
     if "goal_id" in request.path_params:
         return f"goal:{request.path_params['goal_id']}"
     result = json.loads(response.body)
+    if request.url.path == "/api/roadmaps":
+        return f"roadmap:{result['id']}"
+    if request.url.path == "/api/graphs":
+        return f"graph:{result['id']}"
     kind = "goal" if request.url.path == "/api/goals" or "goal_id" in request.path_params else "knowledge"
     return f"{kind}:{result['id']}"
 
@@ -188,7 +192,7 @@ def response_scope(request: Request, db: Session, response: Response) -> str:
 class IdempotentRoute(APIRoute):
     def get_route_handler(self):
         original = super().get_route_handler()
-        protected = (self.path in {"/api/goals", "/api/knowledge", "/api/knowledge/import",
+        protected = (self.path in {"/api/graphs", "/api/roadmaps", "/api/goals", "/api/knowledge", "/api/knowledge/import",
                                    "/api/goals/{goal_id}", "/api/knowledge/{entry_id}"}
                      or self.path.startswith(("/api/units/", "/api/goals/")))
 

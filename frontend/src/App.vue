@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+} from 'vue'
 import Icon from './components/Icon.vue'
 import AssessmentDetails from './components/AssessmentDetails.vue'
 import KnowledgeLibrary from './components/KnowledgeLibrary.vue'
 import RecordEditor from './components/RecordEditor.vue'
 import CourseEditor from './components/CourseEditor.vue'
 import SettingsView from './components/SettingsView.vue'
+const KnowledgeGraphView = defineAsyncComponent(() => import('./components/KnowledgeGraphView.vue'))
 import { clearEditDraft, forgetRecordEdits } from './editing'
 import type { EditTarget, EditableRecord } from './editing'
 import { api, ApiError, post } from './api'
@@ -25,7 +34,7 @@ import type {
   Unit,
 } from './api'
 
-type View = 'dashboard' | 'learn' | 'reviews' | 'knowledge' | 'settings'
+type View = 'map' | 'dashboard' | 'learn' | 'reviews' | 'knowledge' | 'settings'
 const stages: { key: Stage; label: string; subtitle: string; icon: string }[] = [
   { key: 'learn', label: '学', subtitle: '理解与思考', icon: 'book' },
   { key: 'practice', label: '练', subtitle: '检验理解', icon: 'target' },
@@ -35,12 +44,14 @@ const stages: { key: Stage; label: string; subtitle: string; icon: string }[] = 
   { key: 'review', label: '温', subtitle: '间隔回看', icon: 'repeat' },
 ]
 const nav = [
+  { view: 'map' as View, label: '知识图谱', icon: 'graph' },
   { view: 'dashboard' as View, label: '学习概览', icon: 'home' },
   { view: 'learn' as View, label: '我的学习', icon: 'book' },
   { view: 'reviews' as View, label: '温故知新', icon: 'repeat' },
   { view: 'knowledge' as View, label: '知识沉淀', icon: 'notes' },
 ]
-const view = ref<View>('dashboard')
+const view = ref<View>('map')
+const mapId = ref('')
 const mobileNav = ref(false)
 const dashboard = ref<Dashboard>({
   goals: [],
@@ -373,9 +384,10 @@ async function readRoute() {
   const sequence = ++routeSequence
   const epoch = dataEpoch
   const parts = location.hash.replace(/^#\/?/, '').split('/')
-  view.value = ['dashboard', 'learn', 'reviews', 'knowledge', 'settings'].includes(parts[0])
+  view.value = ['map', 'dashboard', 'learn', 'reviews', 'knowledge', 'settings'].includes(parts[0])
     ? (parts[0] as View)
-    : 'dashboard'
+    : 'map'
+  mapId.value = view.value === 'map' ? parts[1] || '' : ''
   error.value = ''
   notice.value = ''
   loading.value = true
@@ -592,6 +604,20 @@ async function confirmWrite(entry: PendingWrite) {
     )
     if (entry.method === 'PATCH') {
       applyEdit(result as EditableRecord, entry)
+    } else if (entry.path === '/graphs') {
+      acknowledgeWrite(entry)
+      removeSaved('draft:concept-graph', (value) => {
+        const draft = value as { topic?: string } | null
+        return draft?.topic?.trim() === entry.payload?.topic
+      })
+      if (sequence === routeSequence) navigate('map', (result as { id: string }).id)
+    } else if (entry.path === '/roadmaps') {
+      acknowledgeWrite(entry)
+      removeSaved('draft:roadmap', (value) => {
+        const draft = value as { topic?: string } | null
+        return draft?.topic?.trim() === entry.payload?.topic
+      })
+      if (sequence === routeSequence) navigate('map', (result as { id: string }).id)
     } else if (entry.path === '/goals') {
       const goal = result as Goal
       drafts.clearSubmitted(entry.scope, entry.payload)
@@ -781,7 +807,7 @@ onUnmounted(() => {
   <a href="#main" class="skip-link" @click.prevent="skipToMain">跳转到主要内容</a>
   <div class="app-shell">
     <aside class="sidebar" :class="{ 'is-open': mobileNav }">
-      <a href="#/dashboard" class="brand" aria-label="DoKnow 首页"
+      <a href="#/map" class="brand" aria-label="DoKnow 首页"
         ><span class="brand-symbol">d<span>·</span></span
         ><span>DoKnow<small>知而后行 · 行而后知</small></span></a
       >
@@ -889,6 +915,14 @@ onUnmounted(() => {
           <span class="spinner"></span>正在整理你的学习空间…
         </div>
 
+        <KnowledgeGraphView
+          v-else-if="view === 'map'"
+          :map-id="mapId"
+          :mode="settings?.mode"
+          @open="navigate('map', $event)"
+          @settings="navigate('settings')"
+          @saving="editorSaving"
+        />
         <template v-else-if="view === 'dashboard'">
           <div class="page-heading">
             <div>

@@ -100,7 +100,7 @@ test('basic goal edits describe their effect, retain courses and handle another 
   await page.getByRole('button', { name: '编辑目标信息', exact: true }).click()
   await expect(page.getByText(/不会重排课程或改变复习日期/)).toBeVisible()
   const other = await context.newPage()
-  await other.goto('/')
+  await other.goto('/#/dashboard')
   await openEditor(other, 'goals', goal.title)
   const title = `新的学习方向名称 ${crypto.randomUUID()}`
   await page.getByLabel('目标标题', { exact: true }).fill(title)
@@ -133,7 +133,7 @@ for (const kind of ['knowledge', 'goals'] as const) {
     page.on('request', (request) => {
       if (request.method() === 'PATCH' && request.url().endsWith(`/api/${kind}/${item.id}`)) keys.push(request.headers()['idempotency-key'])
     })
-    await page.goto(kind === 'knowledge' ? '/#/knowledge' : '/')
+    await page.goto(kind === 'knowledge' ? '/#/knowledge' : '/#/dashboard')
     await openEditor(page, kind, item.title)
     const title = `恢复确认后的标题 ${crypto.randomUUID()}`
     await page.locator('#edit-title').fill(title)
