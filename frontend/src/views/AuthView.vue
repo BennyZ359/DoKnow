@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useGoalStore } from '@/stores/goal'
 import { useToastStore } from '@/stores/toast'
-import { settingsApi } from '@/api/settings'
+import { settingsApi, normalizeBaseUrl } from '@/api/settings'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -85,7 +85,7 @@ async function syncModelConfig(): Promise<void> {
   try {
     await settingsApi.updateLlm({
       provider: llm.provider,
-      base_url: llm.base_url.trim() || undefined,
+      base_url: normalizeBaseUrl(llm.base_url) || undefined,
       api_key: llm.api_key.trim() || undefined,
       model: llm.model.trim() || undefined,
     })

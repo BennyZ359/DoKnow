@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
 import { authApi } from '@/api/auth'
-import { settingsApi } from '@/api/settings'
+import { settingsApi, normalizeBaseUrl } from '@/api/settings'
 import type { ProfileUpdate, UserProfile } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
@@ -131,7 +131,7 @@ async function saveLlm(): Promise<void> {
   try {
     const res = await settingsApi.updateLlm({
       provider: llm.provider,
-      base_url: llm.base_url.trim() || undefined,
+      base_url: normalizeBaseUrl(llm.base_url) || undefined,
       api_key: llm.api_key.trim() || undefined,
       model: llm.model.trim() || undefined,
     })
