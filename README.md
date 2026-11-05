@@ -1,243 +1,237 @@
-
 <div align="center">
 
-# DoKnow
+# 🐠 DoKnow — AI Learning OS
 
-### Know. Do. Grow.
+**Know what to learn. Learn how to do.**
+*知其然，知其所以然，最终做到知行合一。*
 
-**知而后行 · 行而后知**
+A fully-managed **AI autonomous learning system** — state a goal, and the AI builds the
+knowledge graph, plans the path, generates courses, assigns daily tasks, assesses mastery,
+and continuously reinforces your weak spots.
 
-An Open-Source AI Learning Companion
-
-<p>
-  A personal AI tutor that helps you learn, practice, and master knowledge.
-  <br/>
-  Don't just get answers. Build real-world capabilities.
-</p>
-
-<p>
-  <img src="https://img.shields.io/badge/AI-Agent-8A63D2?style=flat-square" />
-  <img src="https://img.shields.io/badge/Open%20Source-MIT-green?style=flat-square" />
-  <img src="https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white" />
-  <img src="https://img.shields.io/badge/Python-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" />
-</p>
-
-<p>
-  <a href="#-features">Features</a> ·
-  <a href="#-architecture">Architecture</a> ·
-  <a href="#-roadmap">Roadmap</a> ·
-  <a href="#-contributing">Contributing</a>
-</p>
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20%2B%20pgvector-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+[![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 </div>
 
 ---
 
+## What is DoKnow?
 
-## 📖 项目介绍
+Most learning tools give you content. DoKnow gives you a **system**.
 
-**DoKnow 是一个开源的 AI 学习助手，致力于帮助每个人真正掌握知识，并将知识转化为实际能力。**
+You describe *what you want to learn*; an AI manager takes over the entire learning
+process and actively manages it from start to mastery:
 
-在 AI 时代，获取知识已经变得越来越容易。
+1. **Input a goal** → the AI builds a **knowledge graph** of the domain.
+2. It plans an ordered **learning path** through prerequisite relationships.
+3. It **auto-generates courses, lessons and exercises**.
+4. It assigns **daily tasks** (学 · 练 · 讲) sized to your progress.
+5. While you learn, it **observes → diagnoses → decides → acts → evaluates**,
+   intervening proactively when you stall, plateau or forget.
+6. It **assesses mastery** per knowledge point and runs **spaced review** (温) to
+   defeat the forgetting curve.
 
-我们可以让 AI 解释一个概念、总结一本书、生成一份学习计划，甚至直接给出问题的答案。
+The result is a closed loop — **学 (learn) · 练 (practice) · 用 (apply) · 讲 (explain) · 温 (review)** —
+where the AI plans, you execute, and the AI keeps re-planning based on evidence.
 
-但有一个更重要的问题：
+## ✨ Features
 
-**你真的学会了吗？**
+- **AI knowledge graph** — auto-built per goal, with prerequisite edges, rendered as an
+  interactive **3D force-directed graph** with mastery-state coloring.
+- **Learning path planning** — a sequenced path over the graph, re-planned as you progress.
+- **Course & lesson generation** — AI-authored curriculum mapped to knowledge points.
+- **Daily tasks (学练讲)** — learn material, practice exercises, and *explain in your own
+  words* (the fastest way to expose shallow understanding).
+- **Mastery assessment** — per-point state machine
+  (`NOT_STARTED → IN_PROGRESS → COMPLETED → REVIEW_REQUIRED → MASTERED`).
+- **Spaced review (温)** — SM-2-style intervals plus weakness-driven reinforcement.
+- **Human-in-the-loop planning** — the AI *proposes* plan adjustments; you accept or reject.
+- **Document ingestion** — upload PDF/DOCX/PPTX/MD, parsed via **Docling** (or MinerU) into
+  the vector store for grounded generation.
+- **Proactive AI manager** — background cycles that detect stalls and intervene, with a
+  visible activity feed.
+- **Agent runtime** — persisted runs, heartbeats, retries and cost tracking.
 
-DoKnow 希望解决的不只是知识获取问题，而是从知识理解到实践应用的完整学习过程。
+## 🧠 The AI / deterministic boundary
 
-它不仅是一个能够回答问题的 AI Chatbot，更是一个能够理解学习目标、制定学习计划、引导思考、安排练习、评估掌握程度，并根据学习情况动态调整教学策略的 AI Learning Companion。
+A core design principle: **agents propose, services decide.**
 
-我们的目标是：
-
-**让 AI 不只是告诉你答案，而是帮助你真正具备解决问题的能力。**
-
-## 💡 核心理念
-
-DoKnow 的设计理念来源于中国传统哲学中的「知行合一」。
-
-> 未有知而不行者，知而不行，只是未知。
->
-> —— 王阳明
-
-我们认为，真正的学习不应该止步于理解知识。
-
-- **Know**：获取知识、理解概念、掌握原理。
-- **Do**：动手实践、解决问题、应用知识。
-- **Grow**：复盘总结、持续进步、形成能力。
-
-学习不是简单地记住答案，而是通过理解、思考、练习和实践，让知识真正成为自己的能力。
-
-## ✨ 核心功能
-
-DoKnow 计划围绕完整的学习闭环构建以下能力：
-
-### 1. AI Learning Planner
-
-AI 学习规划师
-
-- 根据学习目标生成个性化学习路线。
-- 根据用户基础水平拆解知识体系。
-- 自动生成章节、知识点和学习任务。
-- 根据学习进度动态调整学习计划。
-
-### 2. AI Tutor
-
-AI 智能导师
-
-- 从零开始讲解复杂知识。
-- 根据学习者水平调整讲解难度。
-- 通过追问和反问引导独立思考。
-- 结合实例帮助理解抽象概念。
-- 根据用户反馈调整教学策略。
-
-### 3. AI Assessment
-
-AI 智能评估
-
-- 自动生成选择题、简答题和编程题。
-- 根据回答进行智能批改。
-- 分析知识薄弱点和理解误区。
-- 生成针对性的巩固练习。
-- 持续跟踪知识掌握程度。
-
-### 4. Knowledge Base
-
-个人知识库
-
-- 支持 PDF、Word、Markdown 等资料导入。
-- 自动提取文档中的核心知识点。
-- 建立知识点之间的关联。
-- 基于个人知识库进行 AI 问答。
-
-### 5. Learning Memory
-
-学习记忆
-
-- 记录学习历史和答题情况。
-- 跟踪知识点掌握状态。
-- 识别长期薄弱知识点。
-- 根据遗忘规律安排复习任务。
-
-### 6. Practical Training
-
-实战训练
-
-- AI 根据学习目标生成实践任务。
-- 通过真实问题检验知识掌握程度。
-- 分析代码、方案或实践结果。
-- 提供改进建议并逐步提高任务难度。
-
-## 🔄 学习闭环
-
-DoKnow 不希望用户只停留在与 AI 对话，而是建立完整的学习反馈循环。
-
-```mermaid
-flowchart TD
-    A[输入学习目标] --> B[生成学习计划]
-    B --> C[AI 引导教学]
-    C --> D[知识理解与思考]
-    D --> E[练习与测试]
-    E --> F[掌握程度评估]
-    F --> G{是否真正掌握}
-    G -->|否| H[识别薄弱点]
-    H --> C
-    G -->|是| I[实践应用]
-    I --> J[复盘与能力成长]
-    J --> K[进入下一阶段]
+```
+┌───────────────────────────── Agent layer (LangGraph) ─────────────────────────────┐
+│  Learning Manager · Course Agent · Teaching · Exercise · Assessment · Review ...  │
+│  → analyze, generate, PROPOSE                                                     │
+└───────────────────────────────────────┬───────────────────────────────────────────┘
+                                        │  calls (never touches DB directly)
+┌───────────────────────────────────────▼───────────────────────────────────────────┐
+│                     Service layer (deterministic business rules)                  │
+│  Identity · Goal · Knowledge · Curriculum · Orchestration · Teaching · Practice   │
+│  · Assessment · Review · Memory · Content Quality                                 │
+│  → own state, permissions, transactions, execution results                        │
+└───────────────────────────────────────┬───────────────────────────────────────────┘
+                                        │
+              PostgreSQL (pgvector) ◄────┴────► Redis (cache / locks)
 ```
 
-**核心原则：根据学习效果决定下一步，而不是简单按照固定课程推进。**
+The AI analyzes, generates and proposes; business services own the rules, state,
+permissions and transactions. Agents never touch the database directly — they call the
+service layer.
 
-## 🧠 Agent 设计理念
+## Tech stack
 
-DoKnow 采用 Workflow + Agent 相结合的设计方式。
+| Layer             | Technology                                          |
+| ----------------- | --------------------------------------------------- |
+| Backend           | Python 3.12 + FastAPI (modular monolith)            |
+| Database          | PostgreSQL 16 + **pgvector** (vector search)        |
+| Agent framework   | **LangGraph** (Postgres checkpoint persistence)     |
+| Cache / lock      | Redis 7                                             |
+| ORM / migrations  | SQLAlchemy 2 + Alembic                              |
+| Document parsing  | **Docling** (primary) / MinerU (optional)           |
+| Frontend          | Vue 3 + TypeScript + Vite + Pinia + three.js (3D graph) |
+| Deployment        | Docker + docker-compose                             |
 
-不是所有任务都需要 Agent。
+> The original whitepaper suggests Spring Boot + MySQL as a *generic* recommendation.
+> This repository's owner explicitly chose Python + FastAPI + PostgreSQL/pgvector +
+> LangGraph + Docling/MinerU. That choice is authoritative here.
 
-- Workflow：处理确定性较强的任务，例如学习计划生成、知识点排序、测试判分。
-- Agent：处理需要动态判断的任务，例如教学策略选择、学习路径调整和个性化引导。
-- Tools：为 Agent 提供讲解、提问、出题、评估、复习等能力。
-- Memory：记录学习者的历史表现和知识掌握情况。
+## 📁 Repository layout
 
-学习 Agent 的基本工作流程：
-
-```text
-Observe → Think → Act → Reflect
+```
+backend/
+  app/
+    agents/        LangGraph graphs, prompts, state schemas, runtime
+    api/           FastAPI routers + schemas + error mapping
+    core/          config, database, redis, logging, events
+    models/        SQLAlchemy domain models
+    services/      deterministic business logic (12 services)
+    workflows/     orchestration workflows
+frontend/
+  src/
+    api/           typed HTTP client + endpoint modules
+    components/    AppShell, KnowledgeGraph3D, PlanningPanel, cards ...
+    views/         Auth, Home (graph + planner), Tasks, Goal, Course, Practice ...
+    stores/        Pinia stores (auth, goal, toast)
+    styles/        design system
+docker-compose.yml
+.env.example
 ```
 
-让 AI 根据学习者的真实反馈持续调整教学行为。
+## 🚀 Quick start (Docker)
 
-## 🛠 技术架构
-
-DoKnow 采用前后端分离架构，保持模块化设计，支持不同 AI 模型接入。
-
-| 技术领域 | 技术选型 |
-|---|---|
-| Frontend | Vue 3 + TypeScript |
-| Backend | Python + FastAPI |
-| Database | PostgreSQL |
-| Vector Database | pgvector |
-| Agent Framework | LangGraph |
-| Cache | Redis |
-| Document Parsing | Docling / MinerU |
-| Deployment | Docker |
-
-AI 模型支持可扩展设计，避免绑定单一模型供应商。
-
-## 🚀 快速开始
-
-项目目前处于早期建设阶段，安装和部署文档将随着开发逐步完善。
+> **Prereq:** Docker Desktop / OrbStack running.
 
 ```bash
-git clone https://github.com/<your-username>/DoKnow-AI.git
-
-cd DoKnow-AI
+# 1. Configure environment
+cp .env.example .env
 ```
 
-配置文件、环境变量和 Docker 部署说明将在后续版本中补充。
+```bash
+# 2. Bring up the full stack (db + redis + backend + frontend)
+docker compose up --build
+```
 
-## 🗺 项目规划
+```text
+frontend → http://localhost:5173
+backend  → http://localhost:8000   (OpenAPI docs at /docs)
+```
 
-- [ ] 项目基础架构搭建
-- [ ] 用户学习目标管理
-- [ ] AI 学习计划生成
-- [ ] AI Tutor 智能教学
-- [ ] AI 自动出题与答题评估
-- [ ] 学习进度与知识掌握记录
-- [ ] 个人知识库与 RAG
-- [ ] 学习记忆与智能复习
-- [ ] Agent 实战训练
-- [ ] 多模型支持
-- [ ] Docker 一键部署
+### 🔑 Configure the LLM (required for AI features)
 
-## 🌱 开源愿景
+The app boots fine without a key, but the **AI generation** (knowledge graph, path,
+courses, tasks) needs a working OpenAI-compatible key. Edit `.env`:
 
-DoKnow 不只是一个 AI 应用，也是一个持续探索 AI Agent 与智能教育的开源项目。
+```dotenv
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=sk-your-real-key
+LLM_BASE_URL=https://api.openai.com/v1
+```
 
-我们希望：
+Any OpenAI-compatible gateway works (DeepSeek, Moonshot, Qwen, a local Ollama via
+`http://host:11434/v1`, etc.) — just set `LLM_BASE_URL` and `LLM_MODEL` accordingly.
+Then recreate the backend so it picks up the new env:
 
-- 让每个人都拥有自己的 AI 导师。
-- 让学习从被动获取知识转向主动探索。
-- 让 AI 从答案生成器进化为能力培养助手。
-- 让知识真正转化为解决问题的能力。
+```bash
+docker compose up -d --force-recreate backend
+```
 
-欢迎对 AI、Agent、教育技术感兴趣的开发者一起参与。
+## 🛠 Local development
+
+Backend:
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+# uses Postgres + Redis, or start just those via Docker:
+docker compose up db redis
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173
+npm run build      # type-check + production build
+```
+
+## ⚙️ Environment variables
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `doknow` | Postgres credentials |
+| `POSTGRES_PORT` | `5432` | Exposed Postgres port |
+| `DATABASE_URL` | `postgresql+psycopg://…@localhost:5432/doknow` | Backend DB DSN |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis DSN |
+| `SECRET_KEY` | `change-me-in-production` | **Change in production** (JWT signing) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` | Access-token lifetime (7 days) |
+| `LLM_PROVIDER` | `openai` | LLM provider |
+| `LLM_MODEL` | `gpt-4o-mini` | Model name |
+| `LLM_API_KEY` | — | **Required for AI features** |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible base URL |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embeddings for vector search / memory |
+| `PARSER_BACKEND` | `docling` | `docling` or `mineru` |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | Frontend → backend base URL (build-time) |
+
+## 🧭 Core concepts
+
+- **Goal** — what you want to learn; one is *active* at a time.
+- **Knowledge point** — an atomic unit of the domain, typed as concept / fact /
+  procedure / principle / skill, with difficulty and prerequisite edges.
+- **Learning path** — an ordered traversal of knowledge points.
+- **Task (学练讲)** — a concrete unit of daily work.
+- **Review (温)** — a scheduled reinforcement, spaced by recall performance.
+- **Mastery** — per-point state driven by exercise and explanation performance.
+
+## 🗺 Roadmap
+
+- [x] Auth, goals, knowledge graph, path planning
+- [x] Course/lesson + exercise generation and grading
+- [x] Daily tasks (学练讲) + spaced review (温)
+- [x] Human-in-the-loop plan adjustment
+- [x] 3D interactive knowledge-graph UI
+- [ ] Assessment center & richer mastery analytics
+- [ ] Memory / personalization (learner profile-driven adaptation)
+- [ ] Content quality scoring & auto-improvement
+- [ ] Observability & cost dashboards
 
 ## 🤝 Contributing
 
-欢迎提交 Issue、提出建议和参与代码贡献。
+Issues and pull requests are welcome. For larger changes, please open an issue first to
+discuss the approach. Keep the **AI / deterministic boundary** intact: agents propose,
+services decide.
 
 ## 📄 License
 
-MIT License
-
----
-
-<p align="center">
-  <strong>DoKnow — Know. Do. Grow.</strong>
-  <br/>
-  知而后行 · 行而后知
-</p>
+Released under the [MIT License](LICENSE).
