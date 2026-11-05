@@ -25,3 +25,8 @@ dist/
 uploads/
 *.sqlite3
 *.db
+
+# Whitepaper / internal docs (keep local only, never push)
+DoKnow_Product_Whitepaper*.md
+*白皮书*
+*副本.md
