@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 
-from app.api.routers import auth, courses, dashboard, goals, sources, tasks
+from app.api.routers import auth, courses, dashboard, goals, settings, sources, tasks
 from app.services import (
     assessment_service,
     curriculum_service,
@@ -32,6 +32,7 @@ api_router.include_router(courses.router)
 api_router.include_router(tasks.router)
 api_router.include_router(sources.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(settings.router)
 
 # (exception, status) — most specific first; Starlette walks the MRO.
 _ERROR_MAP: list[tuple[type[Exception], int]] = [

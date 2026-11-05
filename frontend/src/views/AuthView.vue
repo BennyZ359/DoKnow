@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useGoalStore } from '@/stores/goal'
 import { useToastStore } from '@/stores/toast'
+import { settingsApi } from '@/api/settings'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -22,6 +23,75 @@ function switchMode(next: 'login' | 'register'): void {
   if (mode.value === next) return
   mode.value = next
   error.value = ''
+}
+
+/* ---------- 自定义模型配置（通用 OpenAI 兼容） ---------- */
+
+interface ProviderPreset {
+  value: string
+  label: string
+  baseUrl: string
+  model: string
+}
+
+const PROVIDERS: ProviderPreset[] = [
+  { value: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { value: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { value: 'moonshot', label: 'Moonshot 月之暗面', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+  { value: 'qwen', label: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  { value: 'ollama', label: 'Ollama（本地）', baseUrl: 'http://localhost:11434/v1', model: 'qwen2.5' },
+  { value: 'custom', label: '自定义', baseUrl: '', model: '' },
+]
+
+const MODEL_KEY = 'doknow_llm_cfg'
+const llm = reactive({
+  provider: 'openai',
+  base_url: 'https://api.openai.com/v1',
+  api_key: '',
+  model: 'gpt-4o-mini',
+})
+const showModel = ref(false)
+
+function onProviderChange(): void {
+  const preset = PROVIDERS.find((p) => p.value === llm.provider)
+  if (preset && preset.value !== 'custom') {
+    llm.base_url = preset.baseUrl
+    llm.model = preset.model
+  }
+}
+
+function loadModelConfig(): void {
+  try {
+    const raw = localStorage.getItem(MODEL_KEY)
+    if (raw) Object.assign(llm, JSON.parse(raw))
+  } catch {
+    /* ignore malformed cache */
+  }
+}
+
+function persistModelConfig(): void {
+  try {
+    localStorage.setItem(MODEL_KEY, JSON.stringify({ ...llm }))
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+watch(llm, persistModelConfig, { deep: true })
+
+/** Push the configured model to the backend (non-fatal if it fails). */
+async function syncModelConfig(): Promise<void> {
+  if (!llm.api_key.trim() && !llm.base_url.trim()) return
+  try {
+    await settingsApi.updateLlm({
+      provider: llm.provider,
+      base_url: llm.base_url.trim() || undefined,
+      api_key: llm.api_key.trim() || undefined,
+      model: llm.model.trim() || undefined,
+    })
+  } catch {
+    /* 模型配置同步失败不阻塞登录，可稍后在设置里重试 */
+  }
 }
 
 async function submit(): Promise<void> {
@@ -48,6 +118,8 @@ async function submit(): Promise<void> {
       await auth.login({ email: form.email.trim(), password: form.password })
       toast.success('欢迎回来！')
     }
+    persistModelConfig()
+    void syncModelConfig()
     void goalStore.loadDashboard().catch(() => {})
     router.push({ name: 'dashboard' })
   } catch (e) {
@@ -57,7 +129,8 @@ async function submit(): Promise<void> {
   }
 }
 
-/* Live knowledge-graph constellation on the showcase panel. */
+/* ---------- 左侧：极光 + 实时知识图谱粒子 ---------- */
+
 interface GraphNode {
   x: number
   y: number
@@ -161,6 +234,7 @@ function setupGraph(): void {
 }
 
 onMounted(() => {
+  loadModelConfig()
   reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   setupGraph()
   if (reducedMotion) {
@@ -182,7 +256,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="auth">
-    <!-- 左侧品牌区：极光 + 实时知识图谱 -->
+    <!-- 左侧品牌区：极光 + 实时知识图谱 + 王阳明 -->
     <aside ref="showcaseRef" class="auth-showcase">
       <div class="showcase-orbs" aria-hidden="true">
         <span class="orb orb-a" />
@@ -199,26 +273,18 @@ onBeforeUnmount(() => {
           <span class="showcase-brand-name">DoKnow</span>
         </div>
 
-        <div class="showcase-copy">
-          <h1 class="showcase-title">把「想学」<br />变成「<span class="grad">学会</span>」</h1>
-          <p class="showcase-sub">
-            从目标到掌握，AI 学习管家为你搭建知识体系、规划路径、生成课程，并每天陪你
-            学·练·讲·温，直到你真的「学会」。
+        <blockquote class="showcase-quote">
+          <p class="quote-text">
+            未有知而不行者。<br />
+            知而不行，<span class="quote-em">只是未知</span>。
           </p>
-
-          <ul class="showcase-features">
-            <li><span class="feat-ico">🧠</span><span class="feat-txt"><b>学</b><p>搭建知识图谱，规划最优路径</p></span></li>
-            <li><span class="feat-ico">✍️</span><span class="feat-txt"><b>练</b><p>智能出题，即时批改巩固</p></span></li>
-            <li><span class="feat-ico">🚀</span><span class="feat-txt"><b>用</b><p>真实场景任务，学以致用</p></span></li>
-            <li><span class="feat-ico">🗣️</span><span class="feat-txt"><b>讲</b><p>用自己的话讲出来，暴露盲区</p></span></li>
-            <li><span class="feat-ico">🌱</span><span class="feat-txt"><b>温</b><p>间隔复习，对抗遗忘曲线</p></span></li>
-          </ul>
-        </div>
+          <footer class="quote-from">—— 王阳明 ·《传习录》</footer>
+        </blockquote>
       </div>
 
       <div class="showcase-foot">
         <span class="foot-dot" aria-hidden="true"></span>
-        <span>AI 学习管家全程陪伴 · 知行合一</span>
+        <span>知行合一 · AI 学习管家全程陪伴</span>
       </div>
     </aside>
 
@@ -332,6 +398,42 @@ onBeforeUnmount(() => {
           </form>
         </Transition>
 
+        <!-- 自定义模型配置 -->
+        <div class="model-box">
+          <button class="model-toggle" type="button" :aria-expanded="showModel" @click="showModel = !showModel">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+              <circle cx="15" cy="7" r="2.2" />
+              <circle cx="9" cy="17" r="2.2" />
+            </svg>
+            <span>模型设置</span>
+            <span class="model-badge" v-if="llm.api_key || llm.base_url">已配置</span>
+            <svg class="chev" :class="{ open: showModel }" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+          </button>
+
+          <div v-if="showModel" class="model-panel">
+            <p class="model-note">可选。配置任意 OpenAI 兼容模型，登录后 AI 功能将使用它。</p>
+            <div class="field">
+              <label for="llm-provider">提供商</label>
+              <select id="llm-provider" v-model="llm.provider" class="input" @change="onProviderChange">
+                <option v-for="p in PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="llm-base">Base URL</label>
+              <input id="llm-base" v-model="llm.base_url" class="input" type="url" placeholder="https://api.example.com/v1" />
+            </div>
+            <div class="field">
+              <label for="llm-key">API Key</label>
+              <input id="llm-key" v-model="llm.api_key" class="input" type="password" placeholder="sk-…" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="llm-model">模型名称</label>
+              <input id="llm-model" v-model="llm.model" class="input" type="text" placeholder="gpt-4o-mini / deepseek-chat" />
+            </div>
+          </div>
+        </div>
+
         <p class="auth-terms">
           登录或注册即表示你同意 DoKnow 的服务条款与隐私政策。
         </p>
@@ -357,7 +459,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   justify-content: space-between;
   gap: 40px;
-  padding: 44px 52px 40px;
+  padding: 44px 56px 40px;
   color: #fff;
   background: linear-gradient(158deg, #0d1636 0%, #141f4d 46%, #2b2067 100%);
 }
@@ -401,7 +503,7 @@ onBeforeUnmount(() => {
   right: 26%;
   bottom: 14%;
   background: radial-gradient(circle, rgba(18, 165, 165, 0.6), rgba(18, 165, 165, 0) 70%);
-  opacity: 0.34;
+  opacity: 0.32;
   animation-delay: -11s;
 }
 
@@ -445,8 +547,8 @@ onBeforeUnmount(() => {
   z-index: 2;
   display: flex;
   flex-direction: column;
-  gap: 34px;
-  max-width: 540px;
+  gap: 56px;
+  max-width: 560px;
 }
 
 .showcase-brand {
@@ -461,96 +563,34 @@ onBeforeUnmount(() => {
   letter-spacing: 0.2px;
 }
 
-.showcase-copy {
-  display: flex;
-  flex-direction: column;
-}
-
-.showcase-title {
+.showcase-quote {
   margin: 0;
-  font-size: 44px;
-  line-height: 1.16;
-  font-weight: 800;
-  letter-spacing: -0.8px;
+  padding: 0;
+  border: 0;
 }
 
-.showcase-title .grad {
-  background: linear-gradient(90deg, #7fb2ff, #c9a6ff);
+.quote-text {
+  margin: 0;
+  font-family: 'Songti SC', 'Noto Serif SC', 'Source Han Serif SC', Georgia, serif;
+  font-size: 40px;
+  line-height: 1.5;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #f3f6ff;
+}
+
+.quote-em {
+  background: linear-gradient(90deg, #9dbdff, #d3b8ff);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-.showcase-sub {
-  margin: 18px 0 0;
+.quote-from {
+  margin-top: 26px;
   font-size: 15px;
-  line-height: 1.72;
-  color: rgba(216, 226, 248, 0.7);
-  max-width: 480px;
-}
-
-.showcase-features {
-  list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.showcase-features li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
-}
-
-.showcase-features li:last-child {
-  grid-column: 1 / -1;
-}
-
-.showcase-features li:hover {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.18);
-  transform: translateY(-1px);
-}
-
-.feat-ico {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  font-size: 18px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.feat-txt {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.feat-txt b {
-  font-size: 14px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.feat-txt p {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: rgba(216, 226, 248, 0.62);
+  letter-spacing: 0.5px;
+  color: rgba(200, 212, 240, 0.55);
 }
 
 .showcase-foot {
@@ -716,7 +756,8 @@ onBeforeUnmount(() => {
   color: var(--accent);
 }
 
-.auth-form .input {
+.auth-form .input,
+.model-panel .input {
   width: 100%;
   height: 46px;
   padding-left: 42px;
@@ -724,8 +765,23 @@ onBeforeUnmount(() => {
   font-size: 14.5px;
 }
 
+.model-panel .input {
+  padding-left: 12px;
+  height: 42px;
+  font-size: 13.5px;
+}
+
 .auth-form .pass-wrap .input {
   padding-right: 44px;
+}
+
+select.input {
+  padding-left: 12px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2379818f' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
 }
 
 .pass-toggle {
@@ -827,6 +883,75 @@ onBeforeUnmount(() => {
   to { transform: rotate(360deg); }
 }
 
+/* ---------- 模型配置 ---------- */
+
+.model-box {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.model-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 2px;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.model-toggle:hover {
+  color: var(--text);
+}
+
+.model-toggle .chev {
+  margin-left: auto;
+  transition: transform 0.18s ease;
+}
+
+.model-toggle .chev.open {
+  transform: rotate(180deg);
+}
+
+.model-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.model-panel {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.model-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.model-panel .field {
+  margin-bottom: 0;
+}
+
+.model-panel label {
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
 .auth-terms {
   margin: 18px 0 0;
   text-align: center;
@@ -878,10 +1003,8 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .orb,
-  .showcase-features li {
+  .orb {
     animation: none !important;
-    transition: none !important;
   }
 }
 </style>

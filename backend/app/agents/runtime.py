@@ -35,6 +35,7 @@ from app.agents.llm import LLMClient, LLMUsage
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.events import utcnow
+from app.core.model_config import get_llm_override
 from app.models.agent import AgentRun, AgentRunStatus, AgentType
 
 logger = structlog.get_logger("app.agents.runtime")
@@ -231,6 +232,9 @@ def run_agent(
         subject_id=str(subject_id) if subject_id else None,
     )
     usage = UsageAccumulator()
+    # Honor a user-configured model (base_url / api_key / model) if one is set;
+    # otherwise fall back to env defaults inside LLMClient.
+    override = get_llm_override()
     ctx = RunContext(
         run_id=str(run_id),
         agent_type=agent_type,
@@ -238,7 +242,12 @@ def run_agent(
         subject_id=subject_id,
         user_id=str(user_id) if user_id else None,
         payload=payload or {},
-        llm=LLMClient(usage_callback=usage.add),
+        llm=LLMClient(
+            usage_callback=usage.add,
+            model=override.get("model"),
+            api_key=override.get("api_key"),
+            base_url=override.get("base_url"),
+        ),
         deadline=time.monotonic() + timeout,
         log=log,
     )
