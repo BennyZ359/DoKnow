@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useGoalStore } from '@/stores/goal'
@@ -25,6 +25,7 @@ function switchMode(next: 'login' | 'register'): void {
 }
 
 async function submit(): Promise<void> {
+  if (busy.value) return
   error.value = ''
   if (!form.email.trim() || !form.password) {
     error.value = '请输入邮箱和密码'
@@ -55,36 +56,142 @@ async function submit(): Promise<void> {
     busy.value = false
   }
 }
+
+/* Live knowledge-graph constellation on the showcase panel. */
+interface GraphNode {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  r: number
+  core: boolean
+  phase: number
+}
+
+const showcaseRef = ref<HTMLElement | null>(null)
+const graphCanvas = ref<HTMLCanvasElement | null>(null)
+let graphCtx: CanvasRenderingContext2D | null = null
+let graphNodes: GraphNode[] = []
+let rafId = 0
+let graphObserver: ResizeObserver | null = null
+let reducedMotion = false
+
+function seedGraph(w: number, h: number): void {
+  const count = Math.max(30, Math.min(64, Math.round((w * h) / 24000)))
+  graphNodes = Array.from({ length: count }, () => ({
+    x: Math.random() * w,
+    y: Math.random() * h,
+    vx: (Math.random() - 0.5) * 0.16,
+    vy: (Math.random() - 0.5) * 0.16,
+    r: 1.1 + Math.random() * 1.7,
+    core: Math.random() < 0.14,
+    phase: Math.random() * Math.PI * 2,
+  }))
+}
+
+function paintGraph(now: number): void {
+  const c = graphCanvas.value
+  const ctx = graphCtx
+  if (!c || !ctx) return
+  const w = c.clientWidth
+  const h = c.clientHeight
+  const t = now / 1000
+  ctx.clearRect(0, 0, w, h)
+  for (const n of graphNodes) {
+    n.x += n.vx
+    n.y += n.vy
+    if (n.x < -24) n.x = w + 24
+    else if (n.x > w + 24) n.x = -24
+    if (n.y < -24) n.y = h + 24
+    else if (n.y > h + 24) n.y = -24
+  }
+  const linkDist = 140
+  for (let i = 0; i < graphNodes.length; i++) {
+    const a = graphNodes[i]
+    for (let j = i + 1; j < graphNodes.length; j++) {
+      const b = graphNodes[j]
+      const dx = a.x - b.x
+      const dy = a.y - b.y
+      const d2 = dx * dx + dy * dy
+      if (d2 < linkDist * linkDist) {
+        const alpha = (1 - Math.sqrt(d2) / linkDist) * 0.22
+        ctx.strokeStyle = `rgba(178, 200, 255, ${alpha.toFixed(3)})`
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(a.x, a.y)
+        ctx.lineTo(b.x, b.y)
+        ctx.stroke()
+      }
+    }
+  }
+  for (const n of graphNodes) {
+    if (n.core) {
+      const pulse = 0.5 + Math.sin(t * 1.6 + n.phase) * 0.5
+      ctx.fillStyle = `rgba(130, 175, 255, ${(0.1 + pulse * 0.12).toFixed(3)})`
+      ctx.beginPath()
+      ctx.arc(n.x, n.y, 5 + pulse * 4, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = 'rgba(232, 241, 255, 0.95)'
+    } else {
+      ctx.fillStyle = 'rgba(214, 226, 250, 0.7)'
+    }
+    ctx.beginPath()
+    ctx.arc(n.x, n.y, n.core ? 1.9 : n.r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+function graphLoop(now: number): void {
+  paintGraph(now)
+  rafId = requestAnimationFrame(graphLoop)
+}
+
+function setupGraph(): void {
+  const c = graphCanvas.value
+  const wrap = showcaseRef.value
+  if (!c || !wrap) return
+  const rect = wrap.getBoundingClientRect()
+  if (rect.width < 2 || rect.height < 2) return
+  const dpr = window.devicePixelRatio || 1
+  c.width = Math.round(rect.width * dpr)
+  c.height = Math.round(rect.height * dpr)
+  graphCtx = c.getContext('2d')
+  if (graphCtx) graphCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  seedGraph(rect.width, rect.height)
+}
+
+onMounted(() => {
+  reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  setupGraph()
+  if (reducedMotion) {
+    paintGraph(performance.now())
+  } else {
+    rafId = requestAnimationFrame(graphLoop)
+  }
+  graphObserver = new ResizeObserver(() => setupGraph())
+  if (showcaseRef.value) graphObserver.observe(showcaseRef.value)
+})
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(rafId)
+  graphObserver?.disconnect()
+  graphObserver = null
+  graphCtx = null
+})
 </script>
 
 <template>
   <div class="auth">
-    <!-- 左侧品牌区 -->
-    <aside class="auth-showcase">
+    <!-- 左侧品牌区：极光 + 实时知识图谱 -->
+    <aside ref="showcaseRef" class="auth-showcase">
       <div class="showcase-orbs" aria-hidden="true">
         <span class="orb orb-a" />
         <span class="orb orb-b" />
         <span class="orb orb-c" />
       </div>
-
-      <svg class="showcase-graph" viewBox="0 0 320 240" aria-hidden="true">
-        <g stroke="rgba(255,255,255,0.18)" stroke-width="1.4">
-          <line x1="60" y1="60" x2="150" y2="40" />
-          <line x1="150" y1="40" x2="240" y2="80" />
-          <line x1="60" y1="60" x2="110" y2="150" />
-          <line x1="110" y1="150" x2="150" y2="40" />
-          <line x1="110" y1="150" x2="220" y2="170" />
-          <line x1="220" y1="170" x2="240" y2="80" />
-          <line x1="150" y1="40" x2="220" y2="170" />
-        </g>
-        <g fill="rgba(255,255,255,0.85)">
-          <circle cx="60" cy="60" r="5" />
-          <circle cx="150" cy="40" r="7" />
-          <circle cx="240" cy="80" r="5" />
-          <circle cx="110" cy="150" r="6" />
-          <circle cx="220" cy="170" r="5" />
-        </g>
-      </svg>
+      <div class="showcase-grid" aria-hidden="true"></div>
+      <canvas ref="graphCanvas" class="showcase-graph" aria-hidden="true"></canvas>
+      <div class="showcase-vignette" aria-hidden="true"></div>
 
       <div class="showcase-inner">
         <div class="showcase-brand">
@@ -92,25 +199,30 @@ async function submit(): Promise<void> {
           <span class="showcase-brand-name">DoKnow</span>
         </div>
 
-        <h1 class="showcase-title">把「想学」<br />变成「<span class="grad">学会</span>」</h1>
-        <p class="showcase-sub">
-          输入一个学习目标，AI 为你搭建知识体系、规划路径、生成课程，并每天陪你
-          学·练·讲·温，直到真正掌握。
-        </p>
+        <div class="showcase-copy">
+          <h1 class="showcase-title">把「想学」<br />变成「<span class="grad">学会</span>」</h1>
+          <p class="showcase-sub">
+            从目标到掌握，AI 学习管家为你搭建知识体系、规划路径、生成课程，并每天陪你
+            学·练·讲·温，直到你真的「学会」。
+          </p>
 
-        <ul class="showcase-features">
-          <li><span class="feat-ico">🧠</span><span><b>学</b> · 搭建知识图谱，规划最优路径</span></li>
-          <li><span class="feat-ico">✍️</span><span><b>练</b> · 智能出题，即时批改巩固</span></li>
-          <li><span class="feat-ico">🚀</span><span><b>用</b> · 真实场景任务，学以致用</span></li>
-          <li><span class="feat-ico">🗣️</span><span><b>讲</b> · 用自己的话讲出来，暴露盲区</span></li>
-          <li><span class="feat-ico">🌱</span><span><b>温</b> · 间隔复习，对抗遗忘曲线</span></li>
-        </ul>
+          <ul class="showcase-features">
+            <li><span class="feat-ico">🧠</span><span class="feat-txt"><b>学</b><p>搭建知识图谱，规划最优路径</p></span></li>
+            <li><span class="feat-ico">✍️</span><span class="feat-txt"><b>练</b><p>智能出题，即时批改巩固</p></span></li>
+            <li><span class="feat-ico">🚀</span><span class="feat-txt"><b>用</b><p>真实场景任务，学以致用</p></span></li>
+            <li><span class="feat-ico">🗣️</span><span class="feat-txt"><b>讲</b><p>用自己的话讲出来，暴露盲区</p></span></li>
+            <li><span class="feat-ico">🌱</span><span class="feat-txt"><b>温</b><p>间隔复习，对抗遗忘曲线</p></span></li>
+          </ul>
+        </div>
       </div>
 
-      <p class="showcase-foot">AI 学习管家全程陪伴 · 知行合一</p>
+      <div class="showcase-foot">
+        <span class="foot-dot" aria-hidden="true"></span>
+        <span>AI 学习管家全程陪伴 · 知行合一</span>
+      </div>
     </aside>
 
-    <!-- 右侧表单区 -->
+    <!-- 右侧表单区：悬浮卡片 -->
     <main class="auth-panel">
       <div class="auth-form-wrap">
         <div class="auth-mobile-brand">
@@ -119,15 +231,15 @@ async function submit(): Promise<void> {
         </div>
 
         <Transition name="auth-swap" mode="out-in">
-          <div :key="mode">
-            <h2 class="auth-title">{{ isRegister ? '创建你的账号' : '欢迎回来' }}</h2>
+          <div :key="mode" class="auth-head">
+            <h1 class="auth-title">{{ isRegister ? '创建你的账号' : '欢迎回来' }}</h1>
             <p class="auth-sub">
-              {{ isRegister ? '几秒钟开始你的第一段 AI 自主学习' : '登录以继续你的学习计划' }}
+              {{ isRegister ? '只需一分钟，开始你的自主学习之旅' : '登录后继续你的学习旅程' }}
             </p>
           </div>
         </Transition>
 
-        <div class="seg" role="tablist">
+        <div class="seg" role="tablist" aria-label="登录或注册">
           <button
             class="seg-btn"
             :class="{ active: mode === 'login' }"
@@ -151,39 +263,48 @@ async function submit(): Promise<void> {
         </div>
 
         <Transition name="auth-swap" mode="out-in">
-          <form :key="mode" @submit.prevent="submit" novalidate>
+          <form :key="mode" class="auth-form" novalidate @submit.prevent="submit">
             <div class="field">
               <label for="auth-email">邮箱</label>
-              <input
-                id="auth-email"
-                v-model="form.email"
-                class="input"
-                type="email"
-                placeholder="you@example.com"
-                autocomplete="email"
-              />
+              <div class="input-ico">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 7 8 6 8-6" /></svg>
+                <input
+                  id="auth-email"
+                  v-model="form.email"
+                  class="input"
+                  type="email"
+                  placeholder="you@example.com"
+                  autocomplete="email"
+                />
+              </div>
             </div>
 
             <div v-if="isRegister" class="field">
-              <label for="auth-name">昵称<span class="opt">（可选）</span></label>
-              <input
-                id="auth-name"
-                v-model="form.display_name"
-                class="input"
-                placeholder="想被怎么称呼？"
-                maxlength="120"
-              />
+              <label for="auth-name">怎么称呼你 <span class="opt">（可选）</span></label>
+              <div class="input-ico">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /><path d="M5 20c0-3.3 3.1-5.5 7-5.5s7 2.2 7 5.5" /></svg>
+                <input
+                  id="auth-name"
+                  v-model="form.display_name"
+                  class="input"
+                  type="text"
+                  placeholder="想被怎么称呼？"
+                  maxlength="120"
+                  autocomplete="nickname"
+                />
+              </div>
             </div>
 
             <div class="field">
               <label for="auth-pass">密码</label>
-              <div class="pass-wrap">
+              <div class="pass-wrap input-ico">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
                 <input
                   id="auth-pass"
                   v-model="form.password"
                   class="input"
                   :type="showPassword ? 'text' : 'password'"
-                  placeholder="至少 8 位"
+                  :placeholder="isRegister ? '设置密码（至少 8 位）' : '请输入密码'"
                   :autocomplete="isRegister ? 'new-password' : 'current-password'"
                 />
                 <button
@@ -192,28 +313,17 @@ async function submit(): Promise<void> {
                   :aria-label="showPassword ? '隐藏密码' : '显示密码'"
                   @click="showPassword = !showPassword"
                 >
-                  <svg v-if="!showPassword" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                  <svg v-else viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-                    <circle cx="12" cy="12" r="3" />
-                    <line x1="4" y1="20" x2="20" y2="4" />
-                  </svg>
+                  <svg v-if="showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 5.8A9.8 9.8 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17.4 17.4 0 0 1-2.4 3.1" /><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2" /><path d="M6.2 6.2A16 16 0 0 0 2.5 12S6 18.5 12 18.5c1.8 0 3.4-.6 4.8-1.4" /><path d="m3 3 18 18" /></svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="3" /></svg>
                 </button>
               </div>
-              <p v-if="isRegister" class="field-hint">至少 8 位，建议混合字母与数字</p>
+              <p v-if="isRegister" class="field-hint">至少 8 位字符，建议混合字母、数字与符号</p>
             </div>
 
-            <p v-if="error" class="form-error" role="alert">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              {{ error }}
-            </p>
+            <div v-if="error" class="form-error" role="alert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>
+              <span>{{ error }}</span>
+            </div>
 
             <button class="btn btn-primary btn-block btn-lg auth-submit" type="submit" :disabled="busy">
               <span v-if="busy" class="btn-spinner" aria-hidden="true" />
@@ -237,94 +347,112 @@ async function submit(): Promise<void> {
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
 }
 
-/* ---------- 左侧品牌区 ---------- */
+/* ---------- 左侧品牌区：极光 + 实时知识图谱 ---------- */
 
 .auth-showcase {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 48px 56px;
+  gap: 40px;
+  padding: 44px 52px 40px;
   color: #fff;
-  background: linear-gradient(160deg, #101a3a 0%, #1b2a63 55%, #3a2a86 100%);
+  background: linear-gradient(158deg, #0d1636 0%, #141f4d 46%, #2b2067 100%);
 }
 
 .showcase-orbs {
   position: absolute;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
+  overflow: hidden;
 }
 
 .orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(70px);
-  opacity: 0.5;
-  animation: float 14s ease-in-out infinite;
+  filter: blur(90px);
+  opacity: 0.42;
+  animation: orbFloat 18s ease-in-out infinite;
 }
 
 .orb-a {
-  width: 360px;
-  height: 360px;
-  background: #2f7bf6;
-  top: -80px;
-  right: -60px;
+  width: 420px;
+  height: 420px;
+  right: -90px;
+  top: -110px;
+  background: radial-gradient(circle, rgba(47, 123, 246, 0.75), rgba(47, 123, 246, 0) 70%);
 }
 
 .orb-b {
-  width: 300px;
-  height: 300px;
-  background: #6d3fd1;
-  bottom: -60px;
-  left: -40px;
-  animation-delay: -5s;
+  width: 360px;
+  height: 360px;
+  left: -120px;
+  bottom: -90px;
+  background: radial-gradient(circle, rgba(109, 63, 209, 0.8), rgba(109, 63, 209, 0) 70%);
+  animation-delay: -6s;
 }
 
 .orb-c {
-  width: 200px;
-  height: 200px;
-  background: #12a5a5;
-  top: 40%;
-  left: 40%;
-  opacity: 0.32;
-  animation-delay: -9s;
+  width: 240px;
+  height: 240px;
+  right: 26%;
+  bottom: 14%;
+  background: radial-gradient(circle, rgba(18, 165, 165, 0.6), rgba(18, 165, 165, 0) 70%);
+  opacity: 0.34;
+  animation-delay: -11s;
 }
 
-@keyframes float {
+@keyframes orbFloat {
   0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(24px, -28px) scale(1.06); }
+  50% { transform: translate(26px, -30px) scale(1.06); }
+}
+
+.showcase-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 42%, rgba(0, 0, 0, 0.9), transparent 78%);
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 42%, rgba(0, 0, 0, 0.9), transparent 78%);
 }
 
 .showcase-graph {
   position: absolute;
-  right: 40px;
-  bottom: 90px;
-  width: 300px;
-  opacity: 0.9;
-  animation: drift 18s ease-in-out infinite;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
-@keyframes drift {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-12px); }
+.showcase-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(120% 92% at 50% 44%, transparent 42%, rgba(7, 11, 28, 0.6) 100%);
 }
 
 .showcase-inner {
   position: relative;
-  z-index: 1;
-  max-width: 460px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  max-width: 540px;
 }
 
 .showcase-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 40px;
-}
-
-.logo-dot--light::after {
-  background: #1b2a63;
 }
 
 .showcase-brand-name {
@@ -333,12 +461,17 @@ async function submit(): Promise<void> {
   letter-spacing: 0.2px;
 }
 
+.showcase-copy {
+  display: flex;
+  flex-direction: column;
+}
+
 .showcase-title {
-  font-size: 40px;
-  line-height: 1.2;
-  font-weight: 700;
-  letter-spacing: -0.5px;
   margin: 0;
+  font-size: 44px;
+  line-height: 1.16;
+  font-weight: 800;
+  letter-spacing: -0.8px;
 }
 
 .showcase-title .grad {
@@ -349,72 +482,139 @@ async function submit(): Promise<void> {
 }
 
 .showcase-sub {
-  margin-top: 18px;
+  margin: 18px 0 0;
   font-size: 15px;
-  line-height: 1.7;
-  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.72;
+  color: rgba(216, 226, 248, 0.7);
+  max-width: 480px;
 }
 
 .showcase-features {
   list-style: none;
-  margin: 36px 0 0;
+  margin: 6px 0 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .showcase-features li {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 14.5px;
-  color: rgba(255, 255, 255, 0.82);
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.showcase-features li:last-child {
+  grid-column: 1 / -1;
+}
+
+.showcase-features li:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
 }
 
 .feat-ico {
-  width: 34px;
-  height: 34px;
-  flex: none;
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 17px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.showcase-features b {
+.feat-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.feat-txt b {
+  font-size: 14px;
+  font-weight: 700;
   color: #fff;
-  font-weight: 600;
+}
+
+.feat-txt p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: rgba(216, 226, 248, 0.62);
 }
 
 .showcase-foot {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(200, 212, 240, 0.55);
 }
 
-/* ---------- 右侧表单区 ---------- */
+.foot-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.15);
+}
+
+/* ---------- 右侧表单区：悬浮卡片 ---------- */
 
 .auth-panel {
   display: grid;
   place-items: center;
-  padding: 48px 32px;
-  background: var(--bg);
+  padding: 40px 28px;
+  background:
+    radial-gradient(900px 640px at 88% -8%, rgba(47, 123, 246, 0.09), transparent 60%),
+    radial-gradient(760px 600px at -6% 108%, rgba(109, 63, 209, 0.09), transparent 58%),
+    var(--bg);
 }
 
 .auth-form-wrap {
+  position: relative;
   width: 100%;
-  max-width: 400px;
+  max-width: 408px;
+  padding: 34px 32px 30px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 34px rgba(16, 24, 40, 0.07);
+}
+
+.auth-form-wrap::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 24px;
+  right: 24px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(47, 123, 246, 0.55), rgba(109, 63, 209, 0.55), transparent);
 }
 
 .auth-mobile-brand {
   display: none;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 28px;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .auth-mobile-name {
@@ -422,17 +622,23 @@ async function submit(): Promise<void> {
   font-weight: 700;
 }
 
+.auth-head {
+  text-align: center;
+  margin-bottom: 22px;
+}
+
 .auth-title {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
   margin: 0;
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--text);
 }
 
 .auth-sub {
-  margin-top: 8px;
+  margin: 8px 0 0;
+  font-size: 14px;
   color: var(--muted);
-  font-size: 14.5px;
 }
 
 .seg {
@@ -440,22 +646,24 @@ async function submit(): Promise<void> {
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   padding: 4px;
-  margin: 28px 0 24px;
-  background: #eaeef4;
+  margin-bottom: 22px;
+  background: #edf1f6;
+  border: 1px solid var(--border);
   border-radius: 12px;
 }
 
 .seg-btn {
-  padding: 9px 0;
-  border: none;
-  border-radius: 9px;
+  appearance: none;
+  border: 0;
   background: transparent;
+  height: 38px;
+  border-radius: 9px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   font-family: inherit;
   color: var(--muted);
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .seg-btn:hover {
@@ -465,21 +673,58 @@ async function submit(): Promise<void> {
 .seg-btn.active {
   background: var(--surface);
   color: var(--accent);
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.1);
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
+  color: var(--text);
 }
 
 .opt {
-  color: var(--muted);
-  font-weight: 400;
+  margin-left: 4px;
   font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
 }
 
-.pass-wrap {
+.input-ico {
   position: relative;
 }
 
-.pass-wrap .input {
+.input-ico .ico {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  pointer-events: none;
+  transition: color 0.18s ease;
+}
+
+.input-ico:focus-within .ico {
+  color: var(--accent);
+}
+
+.auth-form .input {
+  width: 100%;
+  height: 46px;
+  padding-left: 42px;
+  border-radius: 11px;
+  font-size: 14.5px;
+}
+
+.auth-form .pass-wrap .input {
   padding-right: 44px;
 }
 
@@ -488,52 +733,92 @@ async function submit(): Promise<void> {
   right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  width: 32px;
-  height: 32px;
   display: grid;
   place-items: center;
+  width: 34px;
+  height: 34px;
   border: none;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  border-radius: 8px;
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease;
 }
 
 .pass-toggle:hover {
   color: var(--text);
-  background: #f0f3f8;
+  background: #f1f4f8;
+}
+
+.pass-toggle svg {
+  width: 19px;
+  height: 19px;
+}
+
+.field-hint {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
 }
 
 .form-error {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 4px 0 0;
-  padding: 11px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-  color: var(--danger);
+  margin: 4px 0 14px;
+  padding: 11px 13px;
+  border-radius: 11px;
   font-size: 13px;
+  line-height: 1.5;
+  background: var(--danger-soft);
+  border: 1px solid rgba(209, 60, 60, 0.16);
+  color: var(--danger);
 }
 
 .form-error svg {
-  flex: none;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
   margin-top: 2px;
 }
 
 .auth-submit {
   margin-top: 22px;
-  height: 48px;
+  height: 50px;
+  border: 0;
+  border-radius: 12px;
   font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   gap: 10px;
+  color: #fff;
+  background: linear-gradient(135deg, #2f7bf6 0%, #5d4bdd 55%, #6d3fd1 100%);
+  box-shadow: 0 6px 18px rgba(47, 123, 246, 0.3);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+}
+
+.auth-submit:hover:not(:disabled) {
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+  box-shadow: 0 9px 24px rgba(47, 123, 246, 0.38);
+}
+
+.auth-submit:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 4px 12px rgba(47, 123, 246, 0.3);
+}
+
+.auth-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+  box-shadow: 0 4px 12px rgba(47, 123, 246, 0.25);
 }
 
 .btn-spinner {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.45);
+  border: 2px solid rgba(255, 255, 255, 0.4);
   border-top-color: #fff;
   animation: spin 0.7s linear infinite;
 }
@@ -543,11 +828,11 @@ async function submit(): Promise<void> {
 }
 
 .auth-terms {
-  margin-top: 22px;
+  margin: 18px 0 0;
   text-align: center;
   font-size: 12.5px;
-  color: var(--muted);
   line-height: 1.6;
+  color: var(--muted);
 }
 
 /* 模式切换过渡 */
@@ -563,7 +848,7 @@ async function submit(): Promise<void> {
 
 .auth-swap-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(-4px);
 }
 
 /* ---------- 响应式 ---------- */
@@ -579,16 +864,24 @@ async function submit(): Promise<void> {
 
   .auth-panel {
     min-height: 100vh;
-    background: var(--bg);
+    padding: 32px 20px;
   }
 
   .auth-mobile-brand {
-    display: flex;
-    justify-content: center;
+    display: inline-flex;
   }
 
   .auth-form-wrap {
     max-width: 420px;
+    padding: 30px 24px 26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb,
+  .showcase-features li {
+    animation: none !important;
+    transition: none !important;
   }
 }
 </style>
