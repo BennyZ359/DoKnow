@@ -42,15 +42,20 @@ def get_llm_override() -> dict[str, str]:
 
 
 def set_llm_override(**fields: str | None) -> dict[str, str]:
-    """Persist an override. ``None``/empty values are dropped. Returns stored dict."""
-    payload: dict[str, str] = {}
+    """Merge an override into the stored one and persist it.
+
+    Only non-empty values are applied, so a masked-key edit (user changes the
+    model but leaves the API-key field blank) never wipes the stored key. Use
+    :func:`clear_llm_override` to reset entirely. Returns the stored dict.
+    """
+    current = get_llm_override()
     for key in _FIELDS:
         value = fields.get(key)
-        if value:
-            payload[key] = str(value).strip()
-    get_redis().set(_KEY, json.dumps(payload, ensure_ascii=False))
-    logger.info("model_config.set", fields=sorted(payload.keys()))
-    return payload
+        if value and str(value).strip():
+            current[key] = str(value).strip()
+    get_redis().set(_KEY, json.dumps(current, ensure_ascii=False))
+    logger.info("model_config.set", fields=sorted(current.keys()))
+    return current
 
 
 def clear_llm_override() -> None:
